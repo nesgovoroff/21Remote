@@ -1,0 +1,41 @@
+21 Remote
+Copyright (C) 2026 The 21 Remote authors
+
+21 Remote is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version. See the file LICENSE.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+details. The program switches phantom power and other functions of real audio
+equipment: check the settings of your equipment before you rely on it.
+
+Independent project
+-------------------
+21 Remote is an independent project for remote control of D21m frames. It is
+not affiliated with, endorsed by or supported by the maker of the D21m. All
+pictures, texts and program code of 21 Remote are its own. The serial protocol
+and file formats are implemented for interoperability with that equipment.
+
+Trademarks
+----------
+D21m is a trademark of its owner. VST is a trademark of Steinberg Media
+Technologies GmbH. Audio Units, macOS and Apple Silicon are trademarks of
+Apple Inc. REAPER is a trademark of its owner. These names are used only to
+describe compatibility.
+
+Third-party software
+--------------------
+The AU and VST3 plug-ins are built with:
+
+- JUCE 8 (https://juce.com), used under the GNU Affero General Public
+  License v3. JUCE is fetched from https://github.com/juce-framework/JUCE when
+  the plug-ins are built and is not part of this repository.
+- The VST 3 SDK of Steinberg Media Technologies GmbH, as included in JUCE,
+  under its open-source licence (GPLv3 for the version included in JUCE 8.0.4;
+  MIT from VST 3.8).
+
+The app itself (engine, window, web interface) and the JS plug-ins use no
+third-party libraries. The pictures in web/img are drawn by tools/art/cards.py.

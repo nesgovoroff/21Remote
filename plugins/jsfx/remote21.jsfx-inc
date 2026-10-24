@@ -1,0 +1,340 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Shared code of the 21 Remote JS plug-ins: the link to 21 Remote, and the
+// drawing of the controls (same look as the AU/VST3 plug-ins).
+//
+// A JS plug-in cannot connect to another program. The script "21 Remote Bridge"
+// (started with REAPER) connects shared memory "Remote21" with the app:
+//
+//   0 magic 21021   1 bridge heartbeat   2 layout number   3 app answers
+//   4 rack online   5 channels   6 rack name   7 "a plug-in is open"   8 next instance id
+//   100 + 10*i      channel i: slot, ch, kind (1 Mic, 2 DL5), linked, colour, name, label, comment, channel numbers
+//   1100 / 1120     card type / AES flags per slot (types: 0 none, 1 Mic, 2 DL5, 3 GPIO, 4 AES/EBU, 5 ADAT, 6 other)
+//   2000 + 128*(slot-1) + cc   value of a control (as on the app's MIDI map), -1 unknown
+//   4000...         texts: length, then the bytes
+//   61000 + 300*id  mailbox of plug-in instance id: written, read, 64 x (type, a, b, c); type 1 set, 2 comment
+//   81000 + 1100*id comment text of instance id
+
+@init
+// ---------------------------------------------------------------- memory map
+MAXCH = 96;
+CH_SLOT = 100000; CH_CH = CH_SLOT + 128; CH_KIND = CH_CH + 128; CH_LINK = CH_KIND + 128;
+CH_COL = CH_LINK + 128;   // 0xRRGGBB
+CARD = CH_COL + 128;      // card type per slot
+CARDF = CARD + 16;        // AES/EBU flags per slot
+// string slots: names, labels, comments and channel numbers of the channels
+S_NAME = 100; S_LABEL = 200; S_COMMENT = 300; S_IDS = 400; S_RACK = 500; S_TMP = 510;
+// shared memory
+G_MAGIC = 0; G_BEAT = 1; G_LAYOUT = 2; G_APP = 3; G_ONLINE = 4; G_NCH = 5; G_RACK = 6; G_WANT = 7; G_IDS = 8;
+G_CH = 100; G_CARD = 1100; G_CARDF = 1120; G_VAL = 2000; G_MBOX = 61000; G_CTEXT = 81000;
+
+nch = 0;              // channels in the layout
+have_layout = 0;      // the app answers and a layout is here
+rack_online = 0;
+layout_new = 0;       // set when a (new) layout arrived; the plug-in clears it
+my_layout = -1;
+beat_last = -1; beat_t = -100;
+bridge_ok = 0; app_ok = 0;
+strcpy(S_RACK, "");
+// this instance's mailbox
+my_id = gmem[G_IDS] % 64; gmem[G_IDS] = gmem[G_IDS] + 1;
+MB = G_MBOX + my_id * 300;
+gmem[MB] = gmem[MB + 1];
+
+// ---------------------------------------------------------------- colours
+C_GRAPHITE = $x2a2d31; C_PANEL = $x33373c; C_RAISED = $x464b51; C_LINE = $x50565d;
+C_ALU = $xc9cdd1; C_INK = $xe8eaec; C_DIM = $x9aa1a8; C_AMBER = $xf2a33a; C_FOCUS = $x7fb4ff;
+
+function col(c) ( gfx_set(((c / 65536) | 0) / 255, (((c / 256) | 0) & 255) / 255, (c & 255) / 255, 1); );
+function cola(c, a) ( gfx_set(((c / 65536) | 0) / 255, (((c / 256) | 0) & 255) / 255, (c & 255) / 255, a); );
+// text colour readable on a strip colour
+function text_on(c) ( ((c / 65536) | 0) + (((c / 256) | 0) & 255) + (c & 255) < 384 ? $xffffff : $x111111; );
+function darker(c, f) local(r, g, b) (
+  r = ((c / 65536) | 0) * f; g = (((c / 256) | 0) & 255) * f; b = (c & 255) * f;
+  ((r | 0) * 65536) + ((g | 0) * 256) + (b | 0);
+);
+
+// mix of two colours (t = share of b); used instead of transparency so that
+// overlapping shapes stay even
+function mix(a, b, t) local(r, g, bb) (
+  r = ((a / 65536) | 0) * (1 - t) + ((b / 65536) | 0) * t;
+  g = (((a / 256) | 0) & 255) * (1 - t) + (((b / 256) | 0) & 255) * t;
+  bb = (a & 255) * (1 - t) + (b & 255) * t;
+  ((r | 0) * 65536) + ((g | 0) * 256) + (bb | 0);
+);
+
+function font_cond(size, bold) ( gfx_setfont(1, "Avenir Next Condensed", size, bold ? 'b' : 0); );
+function font_ui(size) ( gfx_setfont(2, "Helvetica Neue", size); );
+
+function fill_round(x, y, w, h, r) (
+  r = min(r, min(w, h) / 2);
+  gfx_rect(x + r, y, w - 2 * r, h);
+  gfx_rect(x, y + r, r, h - 2 * r);
+  gfx_rect(x + w - r, y + r, r, h - 2 * r);
+  gfx_circle(x + r, y + r, r, 1, 1);
+  gfx_circle(x + w - r - 1, y + r, r, 1, 1);
+  gfx_circle(x + r, y + h - r - 1, r, 1, 1);
+  gfx_circle(x + w - r - 1, y + h - r - 1, r, 1, 1);
+);
+
+function text(s, x, y, w, h, flags) (
+  gfx_x = x; gfx_y = y;
+  gfx_drawstr(s, flags, x + w, y + h);
+);
+
+// mouse: call ui_begin() at the start of @gfx and ui_end() at the end
+function ui_begin() (
+  clicked = (mouse_cap & 1) && !(ui_last & 1);
+  rclicked = (mouse_cap & 2) && !(ui_last & 2);
+  released = !(mouse_cap & 1) && (ui_last & 1);
+  dbl = 0;
+  clicked ? (
+    dbl = time_precise() - ui_click_t < 0.35 && abs(mouse_x - ui_click_x) < 4 && abs(mouse_y - ui_click_y) < 4;
+    ui_click_t = time_precise(); ui_click_x = mouse_x; ui_click_y = mouse_y;
+  );
+);
+function ui_end() ( ui_last = mouse_cap; mouse_wheel = 0; );
+function hit(x, y, w, h) ( mouse_x >= x && mouse_x < x + w && mouse_y >= y && mouse_y < y + h; );
+
+// a button in the plug-in style; returns 1 when clicked
+function button(x, y, w, h, label, on, oncol, enabled, size) local(c, e) (
+  c = on ? oncol : C_PANEL;
+  enabled && hit(x, y, w, h) ? c = mix(c, $xffffff, 0.08);
+  e = enabled ? 0 : 0.5; // disabled: half way to the background
+  col(mix(c, C_GRAPHITE, e));
+  fill_round(x, y, w, h, 4);
+  col(mix(on ? oncol : C_LINE, C_GRAPHITE, e));
+  gfx_roundrect(x, y, w - 1, h - 1, 4);
+  font_cond(size, 1);
+  col(mix(on ? $x141516 : C_DIM, C_GRAPHITE, e));
+  text(label, x, y, w, h, 1 | 4);
+  enabled && clicked && hit(x, y, w, h);
+);
+
+// a drop-down box; returns 1 when clicked
+function combo(x, y, w, h, s, placeholder) (
+  col(C_PANEL); fill_round(x, y, w, h, 3);
+  col(C_LINE); gfx_roundrect(x, y, w - 1, h - 1, 3);
+  font_ui(14);
+  strlen(s) ? col(C_INK) : col(C_DIM);
+  text(strlen(s) ? s : placeholder, x + 8, y, w - 30, h, 4);
+  col(C_DIM);
+  gfx_triangle(x + w - 18, y + h / 2 - 2, x + w - 8, y + h / 2 - 2, x + w - 13, y + h / 2 + 3);
+  clicked && hit(x, y, w, h);
+);
+
+// ---------------------------------------------------------------- strings
+// sanitize for gfx_showmenu: '|' separates items, a leading !#<> is a flag
+function menu_item(dst, s) local(i, n, c) (
+  n = strlen(s); i = 0;
+  loop(n,
+    c = str_getchar(s, i, 'cu');
+    c == '|' ? c = '/';
+    i == 0 && (c == '!' || c == '#' || c == '<' || c == '>') ? strcat(dst, " ");
+    sprintf(#mi_c, "%c", c); strcat(dst, #mi_c);
+    i += 1;
+  );
+);
+
+// ---------------------------------------------------------------- link
+function gstr(dst, off) local(n, i) (
+  n = gmem[off]; strcpy(dst, ""); i = 1;
+  loop(n, sprintf(#gs_c, "%c", gmem[off + i]); strcat(dst, #gs_c); i += 1;);
+);
+
+// call at the start of every block: heartbeat, layout
+function r21_poll() local(i, b) (
+  gmem[G_WANT] = gmem[G_WANT] + 1;
+  gmem[G_BEAT] != beat_last ? ( beat_last = gmem[G_BEAT]; beat_t = time_precise(); );
+  bridge_ok = gmem[G_MAGIC] == 21021 && time_precise() - beat_t < 2;
+  app_ok = bridge_ok && gmem[G_APP];
+  rack_online = app_ok && gmem[G_ONLINE];
+  app_ok && gmem[G_LAYOUT] != my_layout ? (
+    my_layout = gmem[G_LAYOUT];
+    nch = min(gmem[G_NCH], MAXCH);
+    i = 0;
+    loop(nch,
+      b = G_CH + i * 10;
+      CH_SLOT[i] = gmem[b]; CH_CH[i] = gmem[b + 1]; CH_KIND[i] = gmem[b + 2]; CH_LINK[i] = gmem[b + 3];
+      CH_COL[i] = gmem[b + 4];
+      gstr(S_NAME + i, gmem[b + 5]); gstr(S_LABEL + i, gmem[b + 6]);
+      gstr(S_COMMENT + i, gmem[b + 7]); gstr(S_IDS + i, gmem[b + 8]);
+      i += 1;
+    );
+    i = 0; loop(12, CARD[i] = gmem[G_CARD + i]; CARDF[i] = gmem[G_CARDF + i]; i += 1;);
+    gstr(S_RACK, gmem[G_RACK]);
+    layout_new = 1;
+  );
+  have_layout = app_ok && my_layout >= 0;
+);
+
+// value of a control as the app reports it (-1: not known)
+function val(slot, cc) ( slot >= 1 && slot <= 12 ? gmem[G_VAL + (slot - 1) * 128 + cc] : -1; );
+
+function mb_push(t, a, b, c) local(w, e) (
+  w = gmem[MB];
+  w - gmem[MB + 1] < 64 ? (
+    e = MB + 2 + (w % 64) * 4;
+    gmem[e] = t; gmem[e + 1] = a; gmem[e + 2] = b; gmem[e + 3] = c;
+    gmem[MB] = w + 1;
+  );
+);
+
+// change a control of the rack (shown at once, confirmed by the app)
+function send_set(slot, cc, v) (
+  slot >= 1 && slot <= 12 ? (
+    gmem[G_VAL + (slot - 1) * 128 + cc] = v;
+    mb_push(1, slot, cc, v);
+  );
+);
+
+function send_comment(slot, ch, s) local(n, i, tb) (
+  tb = G_CTEXT + my_id * 1100;
+  n = min(strlen(s), 1000);
+  i = 0; loop(n, gmem[tb + 1 + i] = str_getchar(s, i, 'cu'); i += 1;);
+  gmem[tb] = n;
+  mb_push(2, slot, ch, 0);
+);
+
+// index of the channel slot/ch in the layout, or -1
+function find_ch(slot, ch) local(i, r) (
+  r = -1; i = 0;
+  loop(nch, CH_SLOT[i] == slot && CH_CH[i] == ch ? r = i; i += 1;);
+  r;
+);
+
+function gain_min(kind) ( kind == 2 ? -13 : -11; );
+function gain_max(kind) ( kind == 2 ? 62 : 75; );
+function gain_split(kind) ( kind == 2 ? 17 : 21; );
+
+// ---------------------------------------------------------------- fader
+// the vertical fader with the MIC / LINE zones and dB scale of the app
+function fader_y(v, y, h, gmin, gmax) ( y + 23 + (h - 46) * (gmax - v) / (gmax - gmin); );
+
+function draw_fader(x, y, w, h, v, gmin, gmax, split, enabled) local(cx, bx, t, step, vv, cy) (
+  cx = x + w / 2;
+  bx = x + 4;
+  col($x5a5e63);
+  gfx_rect(bx, fader_y(gmax, y, h, gmin, gmax), 14, fader_y(split, y, h, gmin, gmax) - fader_y(gmax, y, h, gmin, gmax));
+  col($x8f9499);
+  gfx_rect(bx, fader_y(split, y, h, gmin, gmax), 14, fader_y(gmin, y, h, gmin, gmax) - fader_y(split, y, h, gmin, gmax));
+  font_cond(10, 1); col(C_GRAPHITE);
+  text("MIC", bx, fader_y(gmax, y, h, gmin, gmax) + 4, 14, 14, 1 | 4);
+  text("LINE", bx - 3, fader_y(gmin, y, h, gmin, gmax) - 18, 20, 14, 1 | 4);
+  // slit
+  col($x111315);
+  gfx_rect(cx - 2, fader_y(gmax, y, h, gmin, gmax), 4, fader_y(gmin, y, h, gmin, gmax) - fader_y(gmax, y, h, gmin, gmax));
+  // scale
+  font_cond(11, 0);
+  step = max(1, ((gmax - gmin) / 10) | 0);
+  vv = gmin; t = 1;
+  while (t) (
+    vv = min(vv, gmax);
+    col($x6b7178);
+    gfx_line(cx + 16, fader_y(vv, y, h, gmin, gmax), cx + 22, fader_y(vv, y, h, gmin, gmax));
+    col(C_DIM);
+    sprintf(#fd_t, vv > 0 ? "+%d" : "%d", vv);
+    text(#fd_t, cx + 24, fader_y(vv, y, h, gmin, gmax) - 7, 34, 14, 4);
+    vv >= gmax ? t = 0 : vv += step;
+  );
+  // cap
+  cy = fader_y(max(gmin, min(gmax, v)), y, h, gmin, gmax);
+  gfx_set(0, 0, 0, 0.45); fill_round(cx - 16, cy - 23 + 3, 32, 46, 5);
+  gfx_gradrect(cx - 16, cy - 23, 32, 46, 0.416, 0.443, 0.475, 1, 0, 0, 0, 0, -0.0050, -0.0053, -0.0057, 0);
+  enabled ? col(C_INK) : col(C_DIM);
+  gfx_rect(cx - 12, cy - 1, 24, 2);
+  col($x1d1f22); gfx_roundrect(cx - 16, cy - 23, 32, 46, 5);
+);
+
+// value under the mouse for a fader area
+function fader_value(my, y, h, gmin, gmax) (
+  max(gmin, min(gmax, floor(gmax - (my - y - 23) / (h - 46) * (gmax - gmin) + 0.5)));
+);
+
+// ---------------------------------------------------------------- text field
+// One text field at a time can be edited (the comment). ed_on: editing;
+// ed_str: string slot with the text; ed_done: 1 commit, -1 cancel.
+ED = S_TMP + 1;
+ed_on = 0; ed_done = 0;
+
+function utf8_pop(s) local(n, c) (
+  n = strlen(s);
+  while (n > 0 && ((c = str_getchar(s, n - 1, 'cu')) & $xC0) == $x80) ( n -= 1; );
+  n > 0 ? n -= 1;
+  str_setlen(s, n);
+);
+
+function utf8_push(s, u) (
+  u < $x80 ? (
+    sprintf(#u8, "%c", u); strcat(s, #u8);
+  ) : u < $x800 ? (
+    sprintf(#u8, "%c%c", $xC0 | (u / 64), $x80 | (u & 63)); strcat(s, #u8);
+  ) : u < $x10000 ? (
+    sprintf(#u8, "%c%c%c", $xE0 | (u / 4096), $x80 | ((u / 64) & 63), $x80 | (u & 63)); strcat(s, #u8);
+  ) : (
+    sprintf(#u8, "%c%c%c%c", $xF0 | (u / 262144), $x80 | ((u / 4096) & 63), $x80 | ((u / 64) & 63), $x80 | (u & 63)); strcat(s, #u8);
+  );
+);
+
+function edit_begin(s) ( strcpy(ED, s); ed_on = 1; ed_done = 0; );
+
+// keyboard while editing: Enter commits, Shift+Enter new line, Esc cancels
+function edit_keys() local(c, u) (
+  ed_on ? (
+    while ((c = gfx_getchar()) > 0) (
+      c == 13 ? ( (mouse_cap & 8) ? strcat(ED, "\n") : ( ed_on = 0; ed_done = 1; ); )
+      : c == 27 ? ( ed_on = 0; ed_done = -1; )
+      : c == 8 ? utf8_pop(ED)
+      : c >= 32 && c < 127 ? utf8_push(ED, c)
+      : c >= ('u' * 16777216) && c < (('u' + 1) * 16777216) ? ( u = c - 'u' * 16777216; u >= 32 ? utf8_push(ED, u); )
+      : c >= 160 && c < $x110000 ? utf8_push(ED, c);
+    );
+  );
+);
+
+// draw wrapped text (lines broken at spaces), at most maxl lines
+function draw_wrapped(s, x, y, w, lh, maxl, caret) local(n, i, start, lastsp, line, c, tw, th, done) (
+  n = strlen(s); i = 0; start = 0; lastsp = -1; line = 0; done = 0;
+  while (!done) (
+    c = i < n ? str_getchar(s, i, 'cu') : -1;
+    strcpy_substr(#wr, s, start, i - start);
+    gfx_measurestr(#wr, tw, th);
+    c == 10 || c < 0 || (tw > w && i > start) ? (
+      // break before i (at the last space if there is one)
+      tw > w && lastsp > start ? ( strcpy_substr(#wr, s, start, lastsp - start); i = lastsp + 1; )
+      : tw > w && i - 1 > start ? (
+        // no space: break before the last character (not inside a UTF-8 sequence)
+        i -= 1;
+        while (i > start + 1 && (str_getchar(s, i, 'cu') & $xC0) == $x80) ( i -= 1; );
+        strcpy_substr(#wr, s, start, i - start);
+      )
+      : ( strcpy_substr(#wr, s, start, i - start); i += 1; );
+      line < maxl ? text(#wr, x, y + line * lh, w, lh, 4);
+      caret && c < 0 && line < maxl ? (
+        gfx_measurestr(#wr, tw, th);
+        gfx_rect(x + tw + 1, y + line * lh + 2, 1, lh - 4);
+      );
+      line += 1;
+      start = i; lastsp = -1;
+      c < 0 || line >= maxl ? done = 1;
+    ) : (
+      c == ' ' ? lastsp = i;
+      i += 1;
+    );
+  );
+  caret && n == 0 ? gfx_rect(x + 1, y + 2, 1, lh - 4);
+);
+
+// a check box with a label; returns 1 when clicked
+function checkbox(x, y, w, h, label, on) local(b) (
+  b = 18;
+  col(C_ALU); gfx_roundrect(x + 2, y + (h - b) / 2, b, b, 4);
+  on ? (
+    gfx_line(x + 6, y + h / 2, x + 10, y + h / 2 + 4, 1);
+    gfx_line(x + 10, y + h / 2 + 4, x + 17, y + h / 2 - 5, 1);
+    gfx_line(x + 6, y + h / 2 + 1, x + 10, y + h / 2 + 5, 1);
+    gfx_line(x + 10, y + h / 2 + 5, x + 17, y + h / 2 - 4, 1);
+  );
+  font_ui(13); col(C_INK);
+  draw_wrapped(label, x + b + 10, y + 2, w - b - 10, 16, 2, 0);
+  clicked && hit(x, y, w, h);
+);

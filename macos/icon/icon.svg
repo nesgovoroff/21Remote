@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#d9dde0"/><stop offset="1" stop-color="#9da3a8"/></linearGradient>
+    <linearGradient id="face" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3b4046"/><stop offset="1" stop-color="#25282c"/></linearGradient>
+    <linearGradient id="cap" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6f767e"/><stop offset=".48" stop-color="#4a5056"/><stop offset=".52" stop-color="#e8eaec"/><stop offset=".56" stop-color="#4a5056"/><stop offset="1" stop-color="#2c3034"/></linearGradient>
+    <radialGradient id="led" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#b9ffc4"/><stop offset=".55" stop-color="#57d36b"/><stop offset="1" stop-color="#57d36b" stop-opacity="0"/></radialGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#plate)"/>
+  <rect x="150" y="150" width="724" height="724" rx="140" fill="url(#face)"/>
+  <!-- scale -->
+  <g stroke="#8d949b" stroke-width="10" stroke-linecap="round">
+    <line x1="590" y1="250" x2="640" y2="250"/><line x1="590" y1="345" x2="625" y2="345"/><line x1="590" y1="440" x2="640" y2="440"/>
+    <line x1="590" y1="535" x2="625" y2="535"/><line x1="590" y1="630" x2="640" y2="630"/><line x1="590" y1="725" x2="625" y2="725"/>
+    <line x1="590" y1="790" x2="640" y2="790"/>
+  </g>
+  <!-- range bands -->
+  <rect x="330" y="240" width="34" height="320" rx="10" fill="#5a5e63"/>
+  <rect x="330" y="575" width="34" height="220" rx="10" fill="#9aa0a6"/>
+  <!-- slit -->
+  <rect x="497" y="230" width="30" height="570" rx="15" fill="#0f1113"/>
+  <!-- cap -->
+  <g transform="translate(512 470)">
+    <rect x="-112" y="-78" width="224" height="156" rx="26" fill="#000" opacity=".45" transform="translate(0 16)"/>
+    <rect x="-108" y="-78" width="216" height="156" rx="24" fill="url(#cap)" stroke="#16181a" stroke-width="6"/>
+  </g>
+  <!-- lock LED -->
+  <circle cx="742" cy="276" r="50" fill="url(#led)"/>
+  <circle cx="742" cy="276" r="20" fill="#d8ffde"/>
+</svg>

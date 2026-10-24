@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>21 Remote</title>
+<link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+<aside class="sidepanel" id="sidePanel" aria-label="Status and control">
+  <section class="sp-sec">
+    <h3>Racks</h3>
+    <div id="rackList" class="racklist"></div>
+  </section>
+  <section class="sp-sec">
+    <h3>Phantom power</h3>
+    <button id="btnPhantomAll" class="phantomall" aria-pressed="false"><span class="big">48 V OFF</span><small>all cards, all channels</small></button>
+    <p class="sp-note" id="phantomNote"></p>
+  </section>
+  <section class="sp-sec">
+    <h3>Channel names</h3>
+    <button id="btnTakeNames" title="Use the DAW track names of the tracks that have the 21 Channel plug-in">Take ch. names from DAW</button>
+    <button id="btnResetNames" title="Remove all channel names (the fixed names like MIC 1/2 stay)">Reset ch. names</button>
+    <p class="sp-note" id="namesNote"></p>
+  </section>
+  <section class="sp-sec">
+    <h3>Channel order</h3>
+    <button id="btnResetOrder" title="Put the channels back in slot order after Move left / Move right or dragging">Reset Channel Order</button>
+  </section>
+  <section class="sp-sec sp-undo">
+    <h3>Edit</h3>
+    <div class="sp-row">
+      <button id="btnUndo" title="Undo (⌘Z)">Undo</button>
+      <button id="btnRedo" title="Redo (⇧⌘Z)">Redo</button>
+    </div>
+    <p class="sp-note" id="undoNote"></p>
+  </section>
+</aside>
+<header class="topbar">
+  <div class="rackid">
+    <button class="rackname" id="rackName" title="Rename rack"></button>
+    <span class="module" id="moduleType"></span>
+    <span class="health" id="wellness"></span>
+  </div>
+  <nav class="views" role="tablist">
+    <button role="tab" data-view="hardware" aria-selected="true">Rack <kbd>⌘1</kbd></button>
+    <button role="tab" data-view="channels">Channels <kbd>⌘2</kbd></button>
+    <button role="tab" data-view="settings">Settings <kbd>⌘3</kbd></button>
+  </nav>
+  <div class="actions">
+    <button id="btnNew" class="sessbtn new" title="New session (⌘N): default names, colours, comments and order">New Session</button>
+    <button id="btnOpen" class="sessbtn open" title="Open session (⌘O). Recent sessions: File → Open Recent">Open Session</button>
+    <button id="btnSave" class="sessbtn save" title="Save session (⌘S)">Save Session</button>
+    <button id="btnUpdate" class="updatebtn" title="A new version of 21 Remote is available" hidden></button>
+    <button id="btnUpdToken" class="updtoken" title="Update checks need a GitHub access token: the repository is private" hidden>Updates: token needed</button>
+    <button id="btnLearn" class="learnbtn" aria-pressed="false" title="Assign MIDI controls (MIDI Learn)" hidden>MIDI Learn</button>
+  </div>
+</header>
+
+<main>
+  <section id="view-hardware" class="view">
+    <div class="rackframe">
+      <div class="ear"></div>
+      <div class="rackbody">
+        <div class="rackrail top"><span class="model" id="railName"></span><span id="rackMsg" class="rackmsg"></span></div>
+        <div class="slots" id="slots"></div>
+        <div class="rackrail bottom"><span class="hint">Click a card to show or hide it in Channels.</span></div>
+      </div>
+      <div class="ear"></div>
+    </div>
+    <div class="startbar" id="startBar" hidden>
+      <p id="startNote">No rack connected.</p>
+      <div class="startbtns">
+        <button id="btnDemo" class="startbtn" title="Try the app with a simulated rack">DEMO</button>
+        <button id="btnConnect" class="startbtn primary" title="Choose the serial port or the network connection of the rack">CONNECT</button>
+      </div>
+    </div>
+    <div class="cardlist" id="cardList"></div>
+  </section>
+
+  <section id="view-channels" class="view" hidden>
+    <p class="learnhint" id="learnHint" hidden></p>
+    <div class="console" id="console"></div>
+    <p class="empty" id="consoleEmpty" hidden>No channels to show. Cards appear here once the rack has been polled, or after you unhide them in Rack.</p>
+  </section>
+
+  <section id="view-settings" class="view" hidden>
+    <form class="settings" id="settingsForm">
+      <fieldset>
+        <legend>Communication</legend>
+        <label>Connection
+          <select id="setMode">
+            <option value="serial">USB or serial port on this Mac</option>
+            <option value="tcp">Network: connect to device server (server in TCP Server mode)</option>
+            <option value="listen">Network: device server connects here (server in TCP Client mode)</option>
+            <option value="demo">Demo (simulated D21m)</option>
+          </select>
+        </label>
+        <div class="mode" data-mode="serial">
+          <label>Serial port
+            <span class="row"><select id="setPort"></select><button type="button" id="refreshPorts" title="Rescan ports">Rescan</button></span>
+          </label>
+          <p class="note">USB serial adapters appear as <code>cu.usbserial-…</code>, <code>cu.usbmodem…</code> or <code>cu.wchusbserial…</code>. The port runs at 115200 baud, 8N1, no handshake.</p>
+        </div>
+        <div class="mode" data-mode="tcp">
+          <label>Device server address
+            <span class="row"><input type="text" id="setHost" placeholder="192.168.127.254" spellcheck="false" autocomplete="off"><input type="number" id="setTcpPort" min="1" max="65535" placeholder="4001" class="portnum" aria-label="TCP port"></span>
+          </label>
+          <p class="note">In the configuration of the serial device server (RS-232 to Ethernet) set the serial port the D21m is wired to to <b>TCP Server</b> mode. Serial settings: 115200, 8 data bits, no parity, 1 stop bit, flow control none. Enter the data port of that serial port; many device servers use 4001 for serial port 1 and 4002 for port 2. The app reconnects by itself if the link drops.</p>
+        </div>
+        <div class="mode" data-mode="listen">
+          <label>Listen on TCP port
+            <input type="number" id="setListenPort" min="1" max="65535" placeholder="4001" class="portnum">
+          </label>
+          <p class="note">In the configuration of the serial device server set the serial port to <b>TCP Client</b> mode, with destination IP <span id="myIPs">this Mac’s address</span> and the TCP port above. Serial settings: 115200 8N1, flow control none; connection control “Startup/None”. macOS asks once whether to allow incoming connections. Choose Allow.</p>
+        </div>
+        <div class="mode" data-mode="demo">
+          <p class="note">The built-in simulator behaves like a D21m frame with a mix of cards, so you can try the app without hardware.</p>
+        </div>
+        <p class="note portstatus" id="portStatus"></p>
+      </fieldset>
+      <fieldset>
+        <legend>Behaviour</legend>
+        <label>Poll interval
+          <select id="setPoll"></select>
+        </label>
+        <label>Fader step size
+          <select id="setStep"></select>
+        </label>
+      </fieldset>
+      <div class="formactions"><button type="submit" class="primary">Apply</button></div>
+      <fieldset class="midibox" id="midiBox">
+        <legend>MIDI</legend>
+        <p class="note portstatus" id="midiStatus"></p>
+        <div class="midi-on">
+          <label class="check"><input type="checkbox" id="midiVirtual"> Use the “21 Remote” MIDI port (for DAWs: fixed map below, both directions)</label>
+          <label class="check"><input type="checkbox" id="midiFeedback"> Send values back to controllers (motor faders, LEDs)</label>
+          <div class="row midiactions">
+            <button type="button" id="midiLearnBtn">Assign controls (MIDI Learn)…</button>
+            <button type="button" id="midiDump" title="Send every current value to the DAW and controllers">Send all values</button>
+            <button type="button" id="midiRescan">Rescan devices</button>
+          </div>
+          <p class="note" id="midiDevices"></p>
+          <table class="maptable" id="mapTable"></table>
+          <details>
+            <summary>Map of the “21 Remote” port (MIDI channel = slot number 1–12)</summary>
+            <table class="maptable" id="translatorTable"></table>
+            <p class="note">Gain values are exact steps in dB, so automation written in the DAW reproduces the same gain. Changes made on the rack, in this app or from a controller are sent to the DAW as the same CC messages, so they can be recorded as automation.</p>
+          </details>
+          <details>
+            <summary>MIDI monitor</summary>
+            <pre id="midiLog"></pre>
+          </details>
+        </div>
+      </fieldset>
+      <fieldset class="permbox" id="permBox">
+        <legend>Permissions</legend>
+        <div class="permrow">
+          <div><b>Local network</b><p class="note">Needed to reach a device server on your network. macOS asks once.</p><p class="note permres" id="permNetRes"></p></div>
+          <div class="permbtns"><button type="button" data-perm="network">Request access</button><button type="button" data-open="network">Open settings</button></div>
+        </div>
+        <div class="permrow">
+          <div><b>Files and folders</b><p class="note">To open and save sessions in Desktop, Documents and Downloads.</p><p class="note permres" id="permFilesRes"></p></div>
+          <div class="permbtns"><button type="button" data-perm="files">Request access</button><button type="button" data-open="files">Open settings</button></div>
+        </div>
+        <div class="permrow">
+          <div><b>Full disk access</b><p class="note">Optional: for sessions on other drives and network volumes. It can only be switched on in System Settings.</p></div>
+          <div class="permbtns"><button type="button" data-open="disk">Open settings</button></div>
+        </div>
+        <div class="permrow">
+          <div><b>Administrator rights</b><p class="note">Installing an update (app and plug-ins) asks for an administrator password each time. Nothing to set up here.</p></div>
+        </div>
+      </fieldset>
+      <fieldset class="updbox" id="updBox">
+        <legend>Updates</legend>
+        <p class="updline"><span id="updCurrent"></span> <span id="updStatus" class="note"></span></p>
+        <div class="row updactions">
+          <button type="button" id="updCheck">Check for updates</button>
+          <button type="button" id="updInstall" class="primary" disabled>Update now</button>
+          <label class="check"><input type="checkbox" id="updAuto"> Check automatically</label>
+        </div>
+        <p class="note" id="updProgress"></p>
+        <details id="updNotesBox" hidden><summary>What’s new</summary><pre id="updNotes"></pre></details>
+        <details id="updTokenBox">
+          <summary>GitHub access</summary>
+          <p class="note">Leave this empty: updates come from the public repository <code id="updRepo"></code>. A token is only needed
+            if the repository is private. Then create a fine-grained token at github.com → Settings → Developer settings → Personal
+            access tokens, give it access to this repository only with “Contents: Read-only”, and paste it here. It is stored in your
+            macOS Keychain. To remove it, save an empty field.</p>
+          <span class="row"><input type="password" id="updToken" placeholder="github_pat_…" autocomplete="off" spellcheck="false"><button type="button" id="updTokenSave">Save token</button></span>
+        </details>
+      </fieldset>
+      <fieldset class="logbox">
+        <legend>Communication log</legend>
+        <label class="check"><input type="checkbox" id="setTrace"> Record every frame sent and received</label>
+        <pre id="log"></pre>
+      </fieldset>
+    </form>
+  </section>
+</main>
+
+<footer class="statusbar">
+  <span id="hwStatus" class="hwstatus"></span>
+  <span class="spacer"></span>
+  <button id="btnPollNow" title="Poll now (⌘R)">Poll now</button>
+  <button id="btnPolling" title="Start or stop polling"></button>
+  <span id="pollInfo" class="pollinfo"></span>
+</footer>
+
+<div class="menu ctx" id="ctxMenu" role="menu" hidden></div>
+<div class="palette" id="palette" role="dialog" aria-label="Channel colour" hidden></div>
+<dialog id="dlg"><form method="dialog"><div id="dlgBody"></div><div class="dlgactions" id="dlgActions"></div></form></dialog>
+
+<script src="static/app.js"></script>
+</body>
+</html>

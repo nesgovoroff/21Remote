@@ -1,0 +1,307 @@
+desc:21 Overview
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//tags: utility control
+// The whole rack in the DAW: every microphone channel with gain, 48 V, HPF,
+// options, names and comments, plus 16 automation slots that can be assigned
+// to any control of the rack. Audio passes through untouched. Same functions
+// as the AU/VST3 "21 Overview".
+//
+// It talks to the 21 Remote app through the "21 Remote Bridge" script that the
+// installer starts together with REAPER. No MIDI routing is needed.
+
+import remote21.jsfx-inc
+options:gmem=Remote21
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+slider1:0<0,1,0.001>-Slot 1
+slider2:0<0,1,0.001>-Slot 2
+slider3:0<0,1,0.001>-Slot 3
+slider4:0<0,1,0.001>-Slot 4
+slider5:0<0,1,0.001>-Slot 5
+slider6:0<0,1,0.001>-Slot 6
+slider7:0<0,1,0.001>-Slot 7
+slider8:0<0,1,0.001>-Slot 8
+slider9:0<0,1,0.001>-Slot 9
+slider10:0<0,1,0.001>-Slot 10
+slider11:0<0,1,0.001>-Slot 11
+slider12:0<0,1,0.001>-Slot 12
+slider13:0<0,1,0.001>-Slot 13
+slider14:0<0,1,0.001>-Slot 14
+slider15:0<0,1,0.001>-Slot 15
+slider16:0<0,1,0.001>-Slot 16
+
+@init
+ext_noinit = 1;
+NSLOT = 16;
+A_SLOT = 120000;   // assignment of each automation slot: rack slot (1-12, 0 = free)
+A_CC = A_SLOT + 16; // and its CC
+A_LAST = A_CC + 16; // last value sent/received (normalised), -1 = none
+memset(A_LAST, -1, 16);
+MENU_SLOT = 121000; MENU_CC = MENU_SLOT + 1024; // menu item -> control
+cur_aslot = 0;     // automation slot shown in the top bar
+scroll = 0;
+comment_out = 0; cmt_i = -1;
+// clicks and drags in the window go to the rack from @block (one writer per mailbox)
+PEND = 125000; pend_w = 0; pend_r = 0; drag_i = -1; sdrag = 0;
+
+function queue(slot, cc, v) local(e) (
+  pend_w - pend_r < 256 ? (
+    e = PEND + (pend_w % 256) * 3; e[0] = slot; e[1] = cc; e[2] = v;
+    pend_w += 1;
+  );
+);
+
+// what a control is: kind 1 range (gain), 2 on/off, 3 choice of 4; min, max
+function ctl(slot, cc) local(t) (
+  t = CARD[slot - 1];
+  ck_kind = 0; ck_min = 0; ck_max = 1;
+  t == 1 || t == 2 ? (
+    cc >= 1 && cc <= 8 ? ( ck_kind = 1; ck_min = gain_min(t); ck_max = gain_max(t); )
+    : (cc >= 21 && cc <= 28) || (cc >= 31 && cc <= 38) || (cc >= 41 && cc <= 48) || (cc >= 51 && cc <= 58) ? ck_kind = 2;
+  ) : t == 3 ? (
+    cc >= 1 && cc <= 16 ? ck_kind = 2;
+  ) : t == 4 ? (
+    cc >= 1 && cc <= 10 ? ck_kind = 2 : cc >= 11 && cc <= 20 ? ( ck_kind = 3; ck_max = 3; );
+  );
+  ck_kind;
+);
+
+// name of a control, into string dst
+function ctl_name(dst, slot, cc) local(t, i, k, f) (
+  t = CARD[slot - 1];
+  t == 1 || t == 2 ? (
+    k = cc % 10; f = (cc / 10) | 0;
+    i = find_ch(slot, k);
+    i >= 0 ? ( strcpy(dst, S_NAME + i); strlen(S_LABEL + i) ? ( strcat(dst, " ("); strcat(dst, S_LABEL + i); strcat(dst, ")"); ); )
+    : sprintf(dst, "%s %d/%d", t == 2 ? "DL5" : "MIC", slot, k);
+    strcat(dst, f == 0 ? " Gain" : f == 2 ? " 48 V" : f == 3 ? " HPF" : f == 4 ? (t == 2 ? " DC servo" : " Insert") : (t == 2 ? " CM servo" : " Soft clip"));
+  ) : t == 3 ? sprintf(dst, "GPIO %d GPO %d", slot, cc)
+  : t == 4 ? (
+    cc <= 8 ? sprintf(dst, "AES %d SFC in %d", slot, cc)
+    : cc <= 10 ? sprintf(dst, "AES %d SFC out %s", slot, cc == 9 ? "1-4" : "5-8")
+    : cc <= 12 ? sprintf(dst, "AES %d FS out %s", slot, cc == 11 ? "1-4" : "5-8")
+    : sprintf(dst, "AES %d word length out %d", slot, cc - 12);
+  ) : sprintf(dst, "Slot %d CC %d", slot, cc);
+);
+
+// value of a control as the rack reports it, normalised 0..1 (-1 unknown)
+function ctl_norm(slot, cc) local(v) (
+  v = val(slot, cc);
+  v < 0 || !ctl(slot, cc) ? -1
+  : ck_kind == 1 ? v / (ck_max - ck_min)
+  : ck_kind == 2 ? (v >= 64)
+  : v / 3;
+);
+
+// the CC value for a normalised slot value
+function ctl_cc(slot, cc, n) (
+  ctl(slot, cc);
+  ck_kind == 1 ? floor(n * (ck_max - ck_min) + 0.5)
+  : ck_kind == 2 ? (n >= 0.5 ? 127 : 0)
+  : floor(n * 3 + 0.5);
+);
+
+
+@serialize
+reading = file_avail(0) >= 0;
+i = 0;
+loop(16, file_var(0, A_SLOT[i]); file_var(0, A_CC[i]); i += 1;);
+reading ? memset(A_LAST, -1, 16);
+
+@block
+r21_poll();
+layout_new = 0;
+while (pend_r < pend_w) (
+  e = PEND + (pend_r % 256) * 3;
+  send_set(e[0], e[1], e[2]);
+  pend_r += 1;
+);
+
+// automation slots
+k = 0;
+loop(NSLOT,
+  have_layout && A_SLOT[k] > 0 && ctl(A_SLOT[k], A_CC[k]) ? (
+    n = slider(k + 1);
+    r = ctl_norm(A_SLOT[k], A_CC[k]);
+    A_LAST[k] < 0 ? (
+      // just assigned or loaded: show what the rack has, change nothing
+      r >= 0 ? ( slider(k + 1) = r; A_LAST[k] = r; sliderchange(2 ^ k); );
+    ) : abs(n - A_LAST[k]) > 0.0001 ? (
+      // moved by automation or in the host: to the rack
+      send_set(A_SLOT[k], A_CC[k], ctl_cc(A_SLOT[k], A_CC[k], n));
+      A_LAST[k] = n;
+    ) : r >= 0 && abs(r - A_LAST[k]) > 0.0001 ? (
+      // changed on the rack, in the app or by a controller
+      slider(k + 1) = r; A_LAST[k] = r; sliderchange(2 ^ k);
+    );
+  );
+  k += 1;
+);
+comment_out ? ( cmt_i >= 0 ? send_comment(CH_SLOT[cmt_i], CH_CH[cmt_i], S_TMP + 2); comment_out = 0; );
+
+@gfx 1100 620
+ui_begin();
+GW = gfx_w; GH = gfx_h;
+col(C_GRAPHITE); gfx_rect(0, 0, GW, GH);
+
+// ---- top bar: automation slot, its assignment, clear, status
+col($x26292c); gfx_rect(0, 0, GW, 46);
+font_cond(15, 1); col(C_ALU); text("Automation slot", 12, 9, 110, 28, 4);
+A_SLOT[cur_aslot] > 0 ? ctl_name(#an, A_SLOT[cur_aslot], A_CC[cur_aslot]) : strcpy(#an, "(free)");
+sprintf(#sl, "%d  ", cur_aslot + 1); strcat(#sl, #an);
+combo(124, 9, 250, 28, #sl, "") ? (
+  strcpy(#menu, ""); k = 0;
+  loop(NSLOT,
+    k ? strcat(#menu, "|");
+    k == cur_aslot ? strcat(#menu, "!");
+    A_SLOT[k] > 0 ? ctl_name(#an, A_SLOT[k], A_CC[k]) : strcpy(#an, "(free)");
+    sprintf(#it, "%d  ", k + 1); strcat(#it, #an);
+    menu_item(#menu, #it);
+    k += 1;
+  );
+  gfx_x = 124; gfx_y = 37;
+  (sel = gfx_showmenu(#menu)) > 0 ? cur_aslot = sel - 1;
+);
+// assign: one submenu per card
+A_SLOT[cur_aslot] > 0 ? ctl_name(#an2, A_SLOT[cur_aslot], A_CC[cur_aslot]) : strcpy(#an2, "");
+combo(382, 9, 330, 28, #an2, "Assign a rack control to this slot") && have_layout ? (
+  strcpy(#menu, ""); nm = 0; k = 0;
+  loop(12,
+    t = CARD[k];
+    t >= 1 && t <= 4 ? (
+      sprintf(#hdr, ">Slot %d: %s|", k + 1, t == 1 ? "MIC" : t == 2 ? "DL5 Mic" : t == 3 ? "GPIO" : "AES/EBU");
+      strcpy(#cardm, "");
+      first = nm;
+      t <= 2 ? (
+        c = 1; loop(t == 2 ? 8 : 4,
+          find_ch(k + 1, c) >= 0 ? (
+            f = 0; loop(5, MENU_SLOT[nm] = k + 1; MENU_CC[nm] = f * 10 + c; f = f == 0 ? 2 : f + 1; nm += 1;);
+          );
+          c += 1;
+        );
+      ) : t == 3 ? (
+        c = 1; loop(16, MENU_SLOT[nm] = k + 1; MENU_CC[nm] = c; nm += 1; c += 1;);
+      ) : (
+        CARDF[k] & 1 ? ( c = 1; loop(8, MENU_SLOT[nm] = k + 1; MENU_CC[nm] = c; nm += 1; c += 1;); );
+        CARDF[k] & 2 ? ( c = 9; loop(12, MENU_SLOT[nm] = k + 1; MENU_CC[nm] = c; nm += 1; c += 1;); );
+      );
+      // items of this card; the last one closes the submenu
+      j = first;
+      loop(nm - first,
+        ctl_name(#an, MENU_SLOT[j], MENU_CC[j]);
+        j == nm - 1 ? strcat(#cardm, "<");
+        A_SLOT[cur_aslot] == MENU_SLOT[j] && A_CC[cur_aslot] == MENU_CC[j] ? strcat(#cardm, "!");
+        menu_item(#cardm, #an);
+        strcat(#cardm, "|");
+        j += 1;
+      );
+      nm > first ? ( strcat(#menu, #hdr); strcat(#menu, #cardm); );
+    );
+    k += 1;
+  );
+  gfx_x = 382; gfx_y = 37;
+  (sel = gfx_showmenu(#menu)) > 0 && sel <= nm ? (
+    A_SLOT[cur_aslot] = MENU_SLOT[sel - 1]; A_CC[cur_aslot] = MENU_CC[sel - 1]; A_LAST[cur_aslot] = -1;
+  );
+);
+button(720, 9, 70, 28, "Clear", 0, C_ALU, A_SLOT[cur_aslot] > 0, 14) ? ( A_SLOT[cur_aslot] = 0; A_CC[cur_aslot] = 0; A_LAST[cur_aslot] = -1; );
+font_ui(12); col(C_DIM);
+!bridge_ok ? strcpy(#st, "The 21 Remote Bridge script is not running. Restart REAPER once after installing 21 Remote.")
+: !app_ok ? strcpy(#st, "Starting 21 Remote...")
+: !rack_online ? strcpy(#st, "21 Remote is running, but the rack is not connected.")
+: ( strcpy(#st, S_RACK); sprintf(#it, "   %d microphone channels", nch); strcat(#st, #it); );
+draw_wrapped(#st, 800, 9, GW - 812, 14, 2, 0);
+
+// ---- channel strips (as in the app)
+SW = 84; gap = 3; top = 56; sb = 14;
+total = nch * (SW + gap) + 12;
+maxscroll = max(0, total - GW);
+bot = GH - sb - 6;
+// fader area of every strip (the same rows for all)
+fy0 = top + 50 + 4 * 26 + 4 + 22; fh0 = bot - 44 - 46 - fy0 - 4;
+// the wheel moves a fader under the mouse, elsewhere it scrolls the strips
+over_fader = mouse_y >= fy0 && mouse_y < fy0 + fh0;
+mouse_wheel != 0 && mouse_y > top && !over_fader ? ( scroll -= mouse_wheel / 2; );
+mouse_hwheel != 0 ? ( scroll += mouse_hwheel / 2; mouse_hwheel = 0; );
+scroll = max(0, min(maxscroll, scroll));
+i = 0;
+loop(nch,
+  sx = 12 + i * (SW + gap) - scroll;
+  sx + SW > 0 && sx < GW ? (
+    kind = CH_KIND[i]; slot = CH_SLOT[i]; chn = CH_CH[i];
+    live = rack_online && !CH_LINK[i];
+    gmin = gain_min(kind); gmax = gain_max(kind);
+    // panel and header
+    col(C_PANEL); fill_round(sx, top, SW, bot - top, 4);
+    col($x2c3034); gfx_rect(sx, top, SW, 40);
+    col(CH_COL[i]); gfx_rect(sx, top + 40, SW, 3);
+    font_cond(15, 1); col(C_INK); text(S_NAME + i, sx + 6, top + 5, SW - 8, 16, 0);
+    font_cond(12, 0); col(C_DIM); text(S_IDS + i, sx + 6, top + 22, SW - 8, 14, 0);
+    // switches
+    y = top + 50; bh = 22;
+    v = val(slot, 20 + chn);
+    button(sx + 6, y, SW - 12, bh, "48 V", v >= 64, C_AMBER, live && v >= 0, 13) ? queue(slot, 20 + chn, v >= 64 ? 0 : 127);
+    y += bh + 4; v = val(slot, 30 + chn);
+    button(sx + 6, y, SW - 12, bh, "HPF", v >= 64, C_ALU, live && v >= 0, 13) ? queue(slot, 30 + chn, v >= 64 ? 0 : 127);
+    y += bh + 4; v = val(slot, 40 + chn);
+    button(sx + 6, y, SW - 12, bh, kind == 2 ? "DC servo" : "Insert", v >= 64, C_ALU, live && v >= 0, 13) ? queue(slot, 40 + chn, v >= 64 ? 0 : 127);
+    y += bh + 4; v = val(slot, 50 + chn);
+    button(sx + 6, y, SW - 12, bh, kind == 2 ? "CM servo" : "Soft clip", v >= 64, C_ALU, live && v >= 0, 13) ? queue(slot, 50 + chn, v >= 64 ? 0 : 127);
+    // gain
+    y += bh + 8;
+    v = val(slot, chn); g = v >= 0 ? gmin + v : 0;
+    font_cond(17, 1); live && v >= 0 ? col(C_INK) : col(C_DIM);
+    v >= 0 ? sprintf(#gr, g > 0 ? "+%d dB" : "%d dB", g) : strcpy(#gr, "– dB");
+    text(#gr, sx, y, SW, 20, 1 | 4);
+    fy = y + 22; fh = bot - 44 - 46 - fy - 4;
+    draw_fader(sx + 4, fy, SW - 8, fh, g, gmin, gmax, gain_split(kind), live && v >= 0);
+    live && v >= 0 ? (
+      clicked && hit(sx + 4, fy, SW - 8, fh) ? ( drag_i = i; );
+      drag_i == i && (mouse_cap & 1) ? (
+        nv = fader_value(mouse_y, fy, fh, gmin, gmax);
+        nv != g ? queue(slot, chn, nv - gmin);
+      );
+      mouse_wheel != 0 && hit(sx + 4, fy, SW - 8, fh) ? (
+        nv = max(gmin, min(gmax, g + (mouse_wheel > 0 ? 1 : -1))); queue(slot, chn, nv - gmin);
+      );
+    );
+    // scribble strip and comment
+    c = CH_LINK[i] ? darker(CH_COL[i], 0.67) : CH_COL[i];
+    col(c); gfx_rect(sx, bot - 46 - 40, SW, 40);
+    col(text_on(c)); font_cond(strlen(S_LABEL + i) > 10 ? 12 : 14, 1);
+    text(strlen(S_LABEL + i) ? S_LABEL + i : S_NAME + i, sx + 3, bot - 86, SW - 6, 40, 1 | 4);
+    col($x26292c); gfx_rect(sx, bot - 46, SW, 46);
+    font_ui(11);
+    ed_on && cmt_i == i ? ( col(C_INK); draw_wrapped(ED, sx + 4, bot - 44, SW - 8, 13, 3, 1); col(C_FOCUS); gfx_roundrect(sx, bot - 46, SW - 1, 45, 2); )
+    : strlen(S_COMMENT + i) ? ( col(C_INK); draw_wrapped(S_COMMENT + i, sx + 4, bot - 44, SW - 8, 13, 3, 0); )
+    : ( col($x6c737a); text("Comment", sx + 4, bot - 44, SW - 8, 13, 0); );
+    clicked && hit(sx, bot - 46, SW, 46) && !ed_on ? ( cmt_i = i; edit_begin(S_COMMENT + i); );
+  );
+  i += 1;
+);
+released ? drag_i = -1;
+clicked && ed_on && cmt_i >= 0 && !hit(12 + cmt_i * (SW + gap) - scroll, bot - 46, SW, 46) ? ( ed_on = 0; ed_done = 1; );
+edit_keys();
+ed_done == 1 ? ( cmt_i >= 0 && strcmp(ED, S_COMMENT + cmt_i) ? ( strcpy(S_TMP + 2, ED); strcpy(S_COMMENT + cmt_i, ED); comment_out = 1; ); ed_done = 0; );
+ed_done == -1 ? ed_done = 0;
+nch == 0 ? (
+  font_ui(14); col(C_DIM);
+  text(have_layout ? "No microphone channels in the rack." : "Waiting for 21 Remote...", 0, top, GW, bot - top, 1 | 4);
+);
+
+// scroll bar
+maxscroll > 0 ? (
+  col($x1e2124); gfx_rect(12, GH - sb, GW - 24, 8);
+  thumbw = max(40, (GW - 24) * GW / total);
+  thumbx = 12 + (GW - 24 - thumbw) * scroll / maxscroll;
+  col(C_RAISED); fill_round(thumbx, GH - sb, thumbw, 8, 4);
+  clicked && hit(12, GH - sb - 4, GW - 24, 16) ? sdrag = 1;
+  sdrag && (mouse_cap & 1) ? scroll = max(0, min(maxscroll, (mouse_x - 12 - thumbw / 2) / (GW - 24 - thumbw) * maxscroll));
+);
+released ? sdrag = 0;
+
+ui_end();

@@ -1,0 +1,47 @@
+name: maintenance
+
+# Run by hand (Actions > maintenance > Run workflow): delete old releases,
+# move a release tag to the current main commit, and reload the notes of a
+# release from notes/<version>.md.
+on:
+  workflow_dispatch:
+    inputs:
+      delete:
+        description: "Releases to delete (tags, separated by spaces)"
+        required: false
+        default: ""
+      retag:
+        description: "Release tag to move to the current main commit (e.g. v1.0.0)"
+        required: false
+        default: ""
+      notes:
+        description: "Release whose notes are reloaded from notes/<version>.md (tag, e.g. v1.0.0)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  releases:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DELETE: ${{ inputs.delete }}
+          NOTES: ${{ inputs.notes }}
+          RETAG: ${{ inputs.retag }}
+        run: |
+          case "$RETAG" in v[0-9]*)
+            git tag -f "$RETAG"
+            git push -f origin "refs/tags/$RETAG" ;;
+          esac
+          for t in $DELETE; do
+            case "$t" in v[0-9]*) gh release delete "$t" --yes --cleanup-tag || echo "no release $t" ;; esac
+          done
+          if [ -n "$NOTES" ]; then
+            gh release edit "$NOTES" --notes-file "notes/${NOTES#v}.md" --latest
+          fi
+          gh release list

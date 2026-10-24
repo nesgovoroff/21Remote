@@ -1,0 +1,217 @@
+desc:21 Channel
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//tags: utility control
+// Put it on a track, pick a channel of the rack, control and automate its
+// preamp (gain, 48 V, HPF, insert/DC servo, soft clip/CM servo). Audio passes
+// through untouched. Same functions as the AU/VST3 "21 Channel".
+//
+// It talks to the 21 Remote app through the "21 Remote Bridge" script that the
+// installer starts together with REAPER. No MIDI routing is needed.
+
+import remote21.jsfx-inc
+options:gmem=Remote21
+
+in_pin:left input
+in_pin:right input
+out_pin:left output
+out_pin:right output
+
+slider1:gain=0<-13,75,1>-Gain (dB)
+slider2:hpf=0<0,1,1{Off,On}>-HPF
+slider3:opt1=0<0,1,1{Off,On}>-Insert / DC servo
+slider4:opt2=0<0,1,1{Off,On}>-Soft clip / CM servo
+slider5:bslot=0<0,12,1>-Rack slot
+slider6:bch=0<0,8,1>-Rack channel
+
+@init
+ext_noinit = 1;
+bkind = 0;                      // card of the bound channel: 1 Mic, 2 DL5
+recall = 0;                     // send the project's settings when it opens
+cur = -1;                       // index of the channel in the layout
+s_gain = gain; s_hpf = hpf; s_o1 = opt1; s_o2 = opt2;
+synced = 0;                     // the plug-in shows the rack's values
+recall_pending = 0;
+ph_req = -1;
+comment_out = 0;
+dragging = 0;
+
+@serialize
+reading = file_avail(0) >= 0;
+file_var(0, bkind); file_var(0, recall);
+reading ? (
+  // the project opens: with "recall" its settings go to the rack, otherwise
+  // the plug-in shows what the rack has
+  recall_pending = recall && bslot > 0;
+  cur = -1; synced = 0;
+  layout_new = have_layout;
+);
+
+@slider
+gmin = gain_min(bkind); gmax = gain_max(bkind);
+gain = max(gmin, min(gmax, floor(gain + 0.5)));
+
+@block
+r21_poll();
+layout_new ? (
+  layout_new = 0;
+  cur = find_ch(bslot, bch);
+  cur >= 0 ? bkind = CH_KIND[cur];
+  synced = 0;
+);
+!have_layout ? synced = 0;
+gmin = gain_min(bkind); gmax = gain_max(bkind);
+present = cur >= 0 && have_layout;
+
+present ? (
+  base = (bslot - 1) * 128;
+  !synced ? (
+    // with "recall", the project's settings go to the rack first (never 48 V)
+    recall_pending && !CH_LINK[cur] ? (
+      send_set(bslot, bch, gain - gmin);
+      send_set(bslot, 30 + bch, hpf ? 127 : 0);
+      send_set(bslot, 40 + bch, opt1 ? 127 : 0);
+      send_set(bslot, 50 + bch, opt2 ? 127 : 0);
+    );
+    recall_pending = 0;
+    s_gain = -100; s_hpf = -100; s_o1 = -100; s_o2 = -100; // take the rack's values below
+    synced = 1;
+  );
+  // rack -> plug-in (not while our own change is on its way)
+  (v = val(bslot, bch)) >= 0 && gmin + v != s_gain && (gain == s_gain || s_gain == -100) ? ( gain = s_gain = gmin + v; sliderchange(1); );
+  (v = val(bslot, 30 + bch)) >= 0 && (v >= 64) != s_hpf && (hpf == s_hpf || s_hpf == -100) ? ( hpf = s_hpf = v >= 64; sliderchange(2); );
+  (v = val(bslot, 40 + bch)) >= 0 && (v >= 64) != s_o1 && (opt1 == s_o1 || s_o1 == -100) ? ( opt1 = s_o1 = v >= 64; sliderchange(4); );
+  (v = val(bslot, 50 + bch)) >= 0 && (v >= 64) != s_o2 && (opt2 == s_o2 || s_o2 == -100) ? ( opt2 = s_o2 = v >= 64; sliderchange(8); );
+  v = val(bslot, 20 + bch); ph = v < 0 ? -1 : v >= 64;
+
+  // plug-in -> rack: what changed by hand or by automation (a stereo-linked
+  // channel follows its master and is not sent)
+  !CH_LINK[cur] ? (
+    gain != s_gain && s_gain != -100 ? ( send_set(bslot, bch, gain - gmin); s_gain = gain; );
+    hpf != s_hpf && s_hpf != -100 ? ( send_set(bslot, 30 + bch, hpf ? 127 : 0); s_hpf = hpf; );
+    opt1 != s_o1 && s_o1 != -100 ? ( send_set(bslot, 40 + bch, opt1 ? 127 : 0); s_o1 = opt1; );
+    opt2 != s_o2 && s_o2 != -100 ? ( send_set(bslot, 50 + bch, opt2 ? 127 : 0); s_o2 = opt2; );
+    ph_req >= 0 ? ( send_set(bslot, 20 + bch, ph_req ? 127 : 0); ph = ph_req; );
+  );
+) : ph = -1;
+ph_req = -1;
+comment_out ? ( present ? send_comment(bslot, bch, S_TMP + 2); comment_out = 0; );
+
+@gfx 300 640
+ui_begin();
+GW = gfx_w; GH = gfx_h;
+col(C_GRAPHITE); gfx_rect(0, 0, GW, GH);
+live = present && !CH_LINK[cur];
+
+// ---- channel choice
+x = 12; w = GW - 24;
+present ? (
+  strcpy(#title, S_NAME + cur);
+  strlen(S_LABEL + cur) ? ( strcat(#title, "  "); strcat(#title, S_LABEL + cur); );
+  CH_LINK[cur] ? strcat(#title, "  (stereo-linked)");
+) : bslot > 0 ? sprintf(#title, "Slot %d, channel %d (not in the rack)", bslot, bch) : strcpy(#title, "");
+combo(x, 10, w, 28, #title, have_layout && nch == 0 ? "No microphone channels in the rack" : "Choose a channel of the rack") && have_layout && nch > 0 ? (
+  strcpy(#menu, "");
+  i = 0;
+  loop(nch,
+    i ? strcat(#menu, "|");
+    i == cur ? strcat(#menu, "!");
+    strcpy(#it, S_NAME + i);
+    strlen(S_LABEL + i) ? ( strcat(#it, "  "); strcat(#it, S_LABEL + i); );
+    CH_LINK[i] ? strcat(#it, "  (stereo-linked)");
+    menu_item(#menu, #it);
+    i += 1;
+  );
+  gfx_x = x; gfx_y = 38;
+  sel = gfx_showmenu(#menu);
+  sel > 0 && sel - 1 != cur ? (
+    // bind to the channel: show what the rack has, change nothing
+    cur = sel - 1; bslot = CH_SLOT[cur]; bch = CH_CH[cur]; bkind = CH_KIND[cur];
+    sliderchange(16 + 32);
+    recall_pending = 0; synced = 0; ph = -1;
+    gmin = gain_min(bkind); gmax = gain_max(bkind);
+  );
+);
+
+// ---- status
+!bridge_ok ? strcpy(#st, "The 21 Remote Bridge script is not running. Restart REAPER once after installing 21 Remote.")
+: !app_ok ? strcpy(#st, "Starting 21 Remote...")
+: !rack_online ? strcpy(#st, "21 Remote is running, but the rack is not connected.")
+: bslot == 0 ? strcpy(#st, "Pick the channel this track records from.")
+: !present ? strcpy(#st, "This channel is not in the rack right now.")
+: CH_LINK[cur] ? strcpy(#st, "Stereo-linked: follows the channel on its left.")
+: ( strcpy(#st, S_RACK); strcat(#st, "   channel "); strcat(#st, S_IDS + cur); );
+font_ui(12); col(C_DIM);
+draw_wrapped(#st, x, 46, w, 15, 2, 0);
+
+// ---- layout (as in the AU/VST3 plug-in)
+scrb = 44;
+bottom = GH - 10 - (scrb - 10);
+cy = bottom - 6 - 48; cmt_y = cy;
+ct_y = cmt_y - 20;
+rc_y = ct_y - 36;
+ry = 10 + 28 + 4 + 32 + 26;   // gain readout
+fy = ry + 30;                 // fader and buttons
+bw = max(96, (w / 3) | 0);
+bx = x + w - bw;
+fx = x + 10; fw = w - bw - 20; fh = rc_y - fy - 12;
+
+// fixed name and gain readout
+present ? ( font_cond(15, 1); col(C_ALU); text(S_NAME + cur, x, ry - 24, w - bw, 24, 1 | 4); );
+gmin = gain_min(bkind); gmax = gain_max(bkind);
+g = max(gmin, min(gmax, gain));
+sprintf(#gr, g > 0 ? "+%d dB" : "%d dB", g);
+font_cond(24, 1); live ? col(C_INK) : col(C_DIM);
+text(#gr, x, ry, w - bw, 30, 1 | 4);
+
+// fader
+draw_fader(fx, fy, fw, fh, gain, gmin, gmax, gain_split(bkind), live);
+live ? (
+  clicked && hit(fx, fy, fw, fh) ? (
+    dbl ? ( gain = 0; slider_automate(1, 1); ) : ( dragging = 1; );
+  );
+  dragging && (mouse_cap & 1) ? (
+    nv = fader_value(mouse_y, fy, fh, gmin, gmax);
+    nv != gain ? ( gain = nv; slider_automate(1); );
+  );
+  mouse_wheel != 0 && hit(fx, fy, fw, fh) ? (
+    gain = max(gmin, min(gmax, gain + (mouse_wheel > 0 ? 1 : -1))); slider_automate(1, 1);
+  );
+);
+released && dragging ? ( dragging = 0; slider_automate(1, 1); );
+
+// buttons: 48 V (not automatable), HPF, insert / DC servo, soft clip / CM servo
+yy = fy + 6;
+button(bx, yy + 3, bw, 28, "48 V", ph == 1, C_AMBER, live && ph >= 0, 15) ? ph_req = ph == 1 ? 0 : 1;
+yy += 38;
+button(bx, yy + 3, bw, 28, "HPF", hpf, C_ALU, live, 15) ? ( hpf = !hpf; slider_automate(2, 1); );
+yy += 38;
+button(bx, yy + 3, bw, 28, bkind == 2 ? "DC servo" : "Insert", opt1, C_ALU, live, 15) ? ( opt1 = !opt1; slider_automate(4, 1); );
+yy += 38;
+button(bx, yy + 3, bw, 28, bkind == 2 ? "CM servo" : "Soft clip", opt2, C_ALU, live, 15) ? ( opt2 = !opt2; slider_automate(8, 1); );
+
+// recall on load
+checkbox(x, rc_y, w, 36, "Send these settings to the rack when the project opens", recall) ? recall = !recall;
+
+// comment (kept in 21 Remote)
+font_cond(13, 1); col(C_DIM); text("Comment", x, ct_y, w, 20, 4);
+col($x26292c); gfx_rect(x, cmt_y, w, 48);
+ed_on ? col(C_FOCUS) : col(C_LINE); gfx_roundrect(x, cmt_y, w - 1, 47, 2);
+font_ui(13);
+ed_on ? ( col(C_INK); draw_wrapped(ED, x + 5, cmt_y + 3, w - 10, 14, 3, 1); )
+: present && strlen(S_COMMENT + cur) ? ( col(C_INK); draw_wrapped(S_COMMENT + cur, x + 5, cmt_y + 3, w - 10, 14, 3, 0); )
+: ( cola(C_DIM, 0.7); text("Notes for this channel (kept in 21 Remote)", x + 5, cmt_y + 3, w - 10, 14, 4); );
+clicked && present && hit(x, cmt_y, w, 48) && !ed_on ? edit_begin(S_COMMENT + cur);
+clicked && ed_on && !hit(x, cmt_y, w, 48) ? ( ed_on = 0; ed_done = 1; );
+edit_keys();
+ed_done == 1 ? ( present && strcmp(ED, S_COMMENT + cur) ? ( strcpy(S_TMP + 2, ED); strcpy(S_COMMENT + cur, ED); comment_out = 1; ); ed_done = 0; );
+ed_done == -1 ? ed_done = 0;
+
+// scribble strip: name on the channel colour
+c = present ? CH_COL[cur] : C_RAISED;
+present && CH_LINK[cur] ? c = darker(c, 0.65);
+col(c); gfx_rect(0, GH - scrb, GW, scrb);
+col(text_on(c)); font_cond(17, 1);
+present ? ( strlen(S_LABEL + cur) ? strcpy(#sc, S_LABEL + cur) : strcpy(#sc, S_NAME + cur); ) : strcpy(#sc, "21 Channel");
+text(#sc, 8, GH - scrb, GW - 16, scrb, 1 | 4);
+
+ui_end();

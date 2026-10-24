@@ -1,0 +1,9 @@
+--- !tapi-tbd
+tbd-version: 4
+targets: [ arm64-macos, x86_64-macos ]
+install-name: '/usr/lib/libSystem.B.dylib'
+current-version: 1.0
+exports:
+  - targets: [ arm64-macos, x86_64-macos ]
+    symbols: [ _posix_spawn, _posix_spawn_file_actions_init, _posix_spawn_file_actions_adddup2, _posix_spawn_file_actions_addclose, _posix_spawn_file_actions_addinherit_np, _posix_spawnattr_init, _posix_spawnattr_setflags, _pipe, _read, _write, _close, _kill, _fcntl, _signal, __NSGetExecutablePath, __NSGetEnviron, _strlen, _strtol, _snprintf, _exit, _memcpy, _memset, _bzero, _pthread_create, _pthread_mutex_lock, _pthread_mutex_unlock, dyld_stub_binder ]
+...
