@@ -50,6 +50,7 @@ extern int _NSGetExecutablePath(char *, uint32_t *);
 extern char ***_NSGetEnviron(void);
 extern unsigned long strlen(const char *);
 extern void exit(int);
+extern id NSHomeDirectory(void);
 
 #define MSG(ret, ...) ((ret (*)(id, SEL, ##__VA_ARGS__))objc_msgSend)
 #define CLS(n) objc_getClass(n)
@@ -126,9 +127,8 @@ static void didBecomeActive(id self, SEL _cmd, id note) {
 // when the --background argument did not come through.
 static bool startedByPlugin(void) {
 	id fm = MSG(id)(CLS("NSFileManager"), SEL_("defaultManager"));
-	id homeURL = MSG(id)(fm, SEL_("homeDirectoryForCurrentUser"));
-	if (!homeURL) return false;
-	id home = MSG(id)(homeURL, SEL_("path"));
+	id home = NSHomeDirectory(); // (homeDirectoryForCurrentUser needs macOS 10.12)
+	if (!home) return false;
 	id path = MSG(id, id)(home, SEL_("stringByAppendingPathComponent:"), str("Library/Application Support/21 Remote/launching"));
 	id attrs = MSG(id, id, id)(fm, SEL_("attributesOfItemAtPath:error:"), path, 0);
 	if (!attrs) return false;
@@ -282,11 +282,31 @@ enum { NSCALES = 4, TAG_SCALE = 2000, TAG_ZOOMIN = 2010, TAG_ZOOMOUT = 2011, TAG
 static id scaleItems[NSCALES];
 static double scale = 1.0;
 
+// Before macOS 11 the page is scaled with CSS zoom, set again on every load.
+static id contentController;
+
+static void cssZoom(double s) {
+	const char *v = s == 0.5 ? "0.5" : s == 0.75 ? "0.75" : s == 1.25 ? "1.25" : "1";
+	char code[96] = "document.documentElement.style.zoom='";
+	unsigned long n = strlen(code);
+	while (*v) code[n++] = *v++;
+	code[n++] = '\''; code[n] = 0;
+	if (contentController) {
+		MSG(void)(contentController, SEL_("removeAllUserScripts"));
+		id us = MSG(id)(CLS("WKUserScript"), SEL_("alloc"));
+		us = MSG(id, id, long, bool)(us, SEL_("initWithSource:injectionTime:forMainFrameOnly:"), str(code), 1 /* document end */, true);
+		MSG(void, id)(contentController, SEL_("addUserScript:"), us);
+	}
+	js(code);
+}
+
 static void applyScale(double s, bool resize) {
 	double old = scale;
 	scale = s;
 	if (MSG(bool, SEL)(webView, SEL_("respondsToSelector:"), SEL_("setPageZoom:")))
 		MSG(void, double)(webView, SEL_("setPageZoom:"), s);
+	else
+		cssZoom(s); // pageZoom needs macOS 11
 	for (int i = 0; i < NSCALES; i++)
 		if (scaleItems[i]) MSG(void, long)(scaleItems[i], SEL_("setState:"), scales[i] == s ? 1 : 0);
 	double minW = 760 * s, minH = 520 * s;
@@ -559,6 +579,7 @@ int main(int argc, char **argv) {
 
 	id cfg = MSG(id)(MSG(id)(CLS("WKWebViewConfiguration"), SEL_("alloc")), SEL_("init"));
 	id ucc = MSG(id)(cfg, SEL_("userContentController"));
+	contentController = ucc;
 	MSG(void, id, id)(ucc, SEL_("addScriptMessageHandler:name:"), delegate, str("native"));
 	webView = MSG(id, CGRect, id)(MSG(id)(CLS("WKWebView"), SEL_("alloc")), SEL_("initWithFrame:configuration:"), frame, cfg);
 	MSG(void, unsigned long)(webView, SEL_("setAutoresizingMask:"), 2 | 16);

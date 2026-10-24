@@ -33,7 +33,7 @@ func fakeServer(c net.Conn, sim *SimPort) {
 }
 
 func appWithPort(t *testing.T, name string) *App {
-	a := NewApp(LoadConfig(filepath.Join(t.TempDir(), "s.xml")))
+	a := NewApp(LoadConfig(filepath.Join(tempDir(t), "s.xml")))
 	a.mu.Lock()
 	a.openPortLocked(name)
 	a.mu.Unlock()
@@ -41,7 +41,6 @@ func appWithPort(t *testing.T, name string) *App {
 		t.Fatalf("open %s: %s", name, a.portErr)
 	}
 	go a.senderLoop()
-	t.Cleanup(a.Close)
 	return a
 }
 
@@ -67,6 +66,7 @@ func TestDeviceServerTCPServerMode(t *testing.T) {
 		}
 	}()
 	a := appWithPort(t, "tcp://"+ln.Addr().String())
+	defer a.Close()
 	a.Poll()
 	if n := strips(a); n < 20 || !strings.HasPrefix(a.State().PortStatus, "Connected") {
 		t.Fatalf("poll over TCP failed: %d strips, status %q", n, a.State().PortStatus)
@@ -96,6 +96,7 @@ func TestDeviceServerTCPClientMode(t *testing.T) {
 	port := probe.Addr().(*net.TCPAddr).Port
 	probe.Close()
 	a := appWithPort(t, fmt.Sprintf("tcp-listen://127.0.0.1:%d", port))
+	defer a.Close()
 	if s := a.State().PortStatus; !strings.Contains(s, "Waiting") {
 		t.Fatalf("status %q", s)
 	}
@@ -115,7 +116,7 @@ func TestDeviceServerTCPClientMode(t *testing.T) {
 		t.Fatalf("poll via incoming connection failed: %d strips", n)
 	}
 	// a busy TCP port is reported, not silently ignored
-	b := NewApp(LoadConfig(filepath.Join(t.TempDir(), "s.xml")))
+	b := NewApp(LoadConfig(filepath.Join(tempDir(t), "s.xml")))
 	b.mu.Lock()
 	b.openPortLocked(fmt.Sprintf("tcp-listen://127.0.0.1:%d", port))
 	b.mu.Unlock()

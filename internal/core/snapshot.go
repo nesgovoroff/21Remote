@@ -89,8 +89,10 @@ func ReadSnapshot(r io.Reader) ([]*SnapRack, error) {
 			break
 		}
 		if err != nil {
-			line, _ := dec.InputPos()
-			return nil, fmt.Errorf("syntax error on line %d: %v", line, err)
+			if se, ok := err.(*xml.SyntaxError); ok {
+				return nil, fmt.Errorf("syntax error on line %d: %v", se.Line, err)
+			}
+			return nil, fmt.Errorf("syntax error: %v", err)
 		}
 		se, ok := tok.(xml.StartElement)
 		if !ok {

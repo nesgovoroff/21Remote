@@ -13,7 +13,9 @@
 // end-of-frame marker.
 package proto
 
-import "fmt"
+import (
+	"fmt"
+)
 
 // Host-to-module command classes.
 const (

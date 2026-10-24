@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"remote21/internal/compat"
 	"runtime"
 	"strings"
 	"syscall"
@@ -55,7 +57,7 @@ func requestLocalNetwork(port string) string {
 		c.Close()
 		return "The device server at " + host + " is reachable: local network access works."
 	}
-	if errors.Is(err, syscall.EHOSTUNREACH) || errors.Is(err, syscall.ENETUNREACH) {
+	if compat.Is(err, syscall.EHOSTUNREACH) || compat.Is(err, syscall.ENETUNREACH) {
 		return "The device server at " + host + " cannot be reached. If you did not allow local network access, turn it on for 21 Remote in System Settings."
 	}
 	return "Requested. Test connection to " + host + ": " + err.Error()
@@ -69,13 +71,13 @@ func requestFolders() string {
 	}
 	var parts []string
 	for _, name := range []string{"Desktop", "Documents", "Downloads"} {
-		_, err := os.ReadDir(filepath.Join(home, name))
+		_, err := ioutil.ReadDir(filepath.Join(home, name))
 		switch {
 		case err == nil:
 			parts = append(parts, name+": allowed")
-		case errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EPERM):
+		case os.IsPermission(err) || compat.Is(err, syscall.EPERM):
 			parts = append(parts, name+": not allowed")
-		case errors.Is(err, os.ErrNotExist):
+		case os.IsNotExist(err):
 		default:
 			parts = append(parts, name+": "+err.Error())
 		}

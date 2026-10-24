@@ -2,7 +2,9 @@
 // Package midi parses and builds MIDI 1.0 channel messages.
 package midi
 
-import "fmt"
+import (
+	"fmt"
+)
 
 // Kinds of channel messages the app uses.
 const (

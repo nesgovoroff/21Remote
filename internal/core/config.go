@@ -4,8 +4,10 @@ package core
 import (
 	"encoding/xml"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"path/filepath"
+	"remote21/internal/compat"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,7 +22,7 @@ type Config struct {
 }
 
 func DefaultConfigDir() string {
-	d, err := os.UserConfigDir()
+	d, err := compat.UserConfigDir()
 	if err != nil {
 		d = os.TempDir()
 	}
@@ -94,7 +96,7 @@ func xmlEsc(s string) string {
 func (c *Config) Save() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if err := os.MkdirAll(filepath.Dir(c.Path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(c.Path), 0755); err != nil {
 		return err
 	}
 	var b strings.Builder
@@ -106,7 +108,7 @@ func (c *Config) Save() error {
 	})
 	b.WriteString("  </appSettings>\n</configuration>\n")
 	tmp := c.Path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(b.String()), 0o644); err != nil {
+	if err := ioutil.WriteFile(tmp, []byte(b.String()), 0644); err != nil {
 		return err
 	}
 	return os.Rename(tmp, c.Path)

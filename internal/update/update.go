@@ -9,11 +9,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"remote21/internal/compat"
 	"runtime"
 	"strconv"
 	"strings"
@@ -66,6 +68,7 @@ type asset struct {
 }
 
 type release struct {
+	Draft     bool    `json:"draft"`
 	Tag       string  `json:"tag_name"`
 	Name      string  `json:"name"`
 	Body      string  `json:"body"`
@@ -185,10 +188,11 @@ func (m *Manager) Loop(first, every time.Duration) {
 }
 
 func (m *Manager) request(ctx context.Context, url, accept string) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
+	req = req.WithContext(ctx)
 	req.Header.Set("Accept", accept)
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	req.Header.Set("User-Agent", "21-Remote/"+m.Current)
@@ -209,7 +213,7 @@ func (m *Manager) Check() View {
 	m.update(func(v *View) {
 		v.Checking = false
 		v.Checked = time.Now().Format("2 Jan 15:04")
-		v.NeedsToken = errors.Is(err, errNeedsToken)
+		v.NeedsToken = compat.Is(err, errNeedsToken)
 		if err != nil {
 			v.Error = strings.TrimSpace(err.Error())
 			return
@@ -230,7 +234,10 @@ func (m *Manager) fetchLatest(ctx context.Context) (*release, error) {
 	if m.Repo == "" {
 		return nil, errors.New("This build has no update source.")
 	}
-	resp, err := m.request(ctx, fmt.Sprintf("%s/repos/%s/releases/latest", m.API, m.Repo), "application/vnd.github+json")
+	// This build is for macOS 10.10-10.15: its releases are tagged
+	// v<version>-macos10 and never marked "latest" (that is the current macOS
+	// build), so look through the list.
+	resp, err := m.request(ctx, fmt.Sprintf("%s/repos/%s/releases?per_page=50", m.API, m.Repo), "application/vnd.github+json")
 	if err != nil {
 		return nil, fmt.Errorf("GitHub is not reachable: %v", err)
 	}
@@ -238,23 +245,40 @@ func (m *Manager) fetchLatest(ctx context.Context) (*release, error) {
 	switch resp.StatusCode {
 	case 200:
 	case 401:
-		return nil, fmt.Errorf("GitHub refused the access token. Check or replace it below. %w", errNeedsToken)
+		return nil, compat.Wrap("GitHub refused the access token. Check or replace it below.", errNeedsToken)
 	case 403:
 		return nil, errors.New("GitHub refused the request (rate limit or token without access to the repository).")
 	case 404:
 		if m.Tokens == nil || m.Tokens.Get() == "" {
-			return nil, fmt.Errorf("The repository is private: add a GitHub access token below to check for updates. %w", errNeedsToken)
+			return nil, compat.Wrap("The repository is private: add a GitHub access token below to check for updates.", errNeedsToken)
 		}
-		return nil, fmt.Errorf("No release found, or the token has no access to %s. %w", m.Repo, errNeedsToken)
+		return nil, compat.Wrap(fmt.Sprintf("No release found, or the token has no access to %s.", m.Repo), errNeedsToken)
 	default:
 		return nil, fmt.Errorf("GitHub answered %s", resp.Status)
 	}
-	var r release
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&r); err != nil {
+	var list []release
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(&list); err != nil {
 		return nil, fmt.Errorf("unexpected answer from GitHub: %v", err)
 	}
-	return &r, nil
+	var best *release
+	for i := range list {
+		r := &list[i]
+		if r.Draft || !strings.HasSuffix(r.Tag, ReleaseSuffix) {
+			continue
+		}
+		r.Tag = strings.TrimSuffix(r.Tag, ReleaseSuffix)
+		if best == nil || Newer(strings.TrimPrefix(r.Tag, "v"), strings.TrimPrefix(best.Tag, "v")) {
+			best = r
+		}
+	}
+	if best == nil { // no release for old macOS yet
+		return &release{Tag: "v" + m.Current}, nil
+	}
+	return best, nil
 }
+
+// ReleaseSuffix ends the tags of the releases for macOS 10.10-10.15.
+const ReleaseSuffix = "-macos10"
 
 func (m *Manager) download(ctx context.Context, a asset, dst string) error {
 	resp, err := m.request(ctx, fmt.Sprintf("%s/repos/%s/releases/assets/%d", m.API, m.Repo, a.ID), "application/octet-stream")
@@ -369,7 +393,7 @@ func (m *Manager) install(rel *release) error {
 	if !ok {
 		return errors.New("the release has no installer package")
 	}
-	work, err := os.MkdirTemp("", "remote21-update-")
+	work, err := ioutil.TempDir("", "remote21-update-")
 	if err != nil {
 		return err
 	}

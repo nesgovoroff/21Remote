@@ -6,11 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"io/ioutil"
 	"remote21/internal/core"
 )
 
@@ -20,7 +20,7 @@ type client struct {
 }
 
 func dial(t *testing.T, dir string) *client {
-	b, err := os.ReadFile(filepath.Join(dir, "plugin.json"))
+	b, err := ioutil.ReadFile(filepath.Join(dir, "plugin.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,13 +51,13 @@ func (c *client) next(t *testing.T) map[string]json.RawMessage {
 }
 
 func TestPluginAPI(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	cfg := core.LoadConfig(filepath.Join(dir, "settings.xml"))
 	cfg.Set("COM_Port", core.DemoPort)
 	app := core.NewApp(cfg)
 	app.Start()
 	defer app.Close()
-	app.Do(core.Op{Op: "settings", Value: map[string]any{"port": core.DemoPort}})
+	app.Do(core.Op{Op: "settings", Value: map[string]interface{}{"port": core.DemoPort}})
 	time.Sleep(300 * time.Millisecond) // first poll
 	app.Poll()
 	s, err := Start(app, dir, "tok", "http://x", "test")

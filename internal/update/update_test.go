@@ -2,8 +2,10 @@
 package update
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -38,11 +40,15 @@ func fakeGitHub(t *testing.T, token string, zipBytes []byte) *httptest.Server {
 			return
 		}
 		switch r.URL.Path {
-		case "/repos/o/r/releases/latest":
-			json.NewEncoder(w).Encode(map[string]any{
-				"tag_name": "v1.0.15", "name": "21 Remote 1.0.15", "body": "Faster polling", "html_url": "https://github.com/o/r/releases/v1.0.15",
-				"published_at": "2026-10-24T00:00:00Z",
-				"assets":       []map[string]any{{"id": 7, "name": "21-Remote-1.0.15.pkg", "size": len(zipBytes)}},
+		case "/repos/o/r/releases":
+			// the current macOS build (newest, "latest") must be skipped
+			json.NewEncoder(w).Encode([]map[string]interface{}{
+				{"tag_name": "v1.0.20", "name": "21 Remote 1.0.20", "assets": []map[string]interface{}{{"id": 9, "name": "21-Remote-1.0.20.pkg", "size": 1}}},
+				{"tag_name": "v1.0.16-macos10", "draft": true},
+				{"tag_name": "v1.0.15-macos10", "name": "21 Remote 1.0.15 for macOS 10.10-10.15", "body": "Faster polling", "html_url": "https://github.com/o/r/releases/v1.0.15-macos10",
+					"published_at": "2026-10-24T00:00:00Z",
+					"assets":       []map[string]interface{}{{"id": 7, "name": "21-Remote-1.0.15-macOS10.pkg", "size": len(zipBytes)}}},
+				{"tag_name": "v1.0.12-macos10", "assets": []map[string]interface{}{{"id": 8, "name": "old.pkg", "size": 1}}},
 			})
 		case "/repos/o/r/releases/assets/7":
 			if r.Header.Get("Accept") != "application/octet-stream" {
@@ -89,19 +95,19 @@ func TestDownloadAndInstall(t *testing.T) {
 	m := New("o/r", "1.0.1", &memTokens{"tk"}, true, nil)
 	m.API = srv.URL
 	m.Check()
-	dst := filepath.Join(t.TempDir(), "d.pkg")
+	dst := filepath.Join(tempDir(t), "d.pkg")
 	a, _ := pkgAsset(m.rel)
-	if err := m.download(t.Context(), a, dst); err != nil {
+	if err := m.download(context.Background(), a, dst); err != nil {
 		t.Fatal(err)
 	}
-	b, _ := os.ReadFile(dst)
+	b, _ := ioutil.ReadFile(dst)
 	if string(b) != string(payload) || !strings.Contains(m.View().Progress, "100%") {
 		t.Fatalf("download: %d bytes, progress %q", len(b), m.View().Progress)
 	}
 	if checkPkg(dst) != nil {
 		t.Fatal("package not recognised")
 	}
-	os.WriteFile(dst, []byte("<html>"), 0o644)
+	ioutil.WriteFile(dst, []byte("<html>"), 0644)
 	if checkPkg(dst) == nil {
 		t.Fatal("non-package accepted")
 	}
@@ -121,11 +127,11 @@ func TestDownloadAndInstall(t *testing.T) {
 
 // RelaunchScript waits for both processes and then opens the app.
 func TestRelaunchScript(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	bin := filepath.Join(root, "bin")
-	os.MkdirAll(bin, 0o755)
+	os.MkdirAll(bin, 0755)
 	marker := filepath.Join(root, "opened")
-	os.WriteFile(filepath.Join(bin, "open"), []byte("#!/bin/sh\necho \"$@\" > "+marker+"\n"), 0o755)
+	ioutil.WriteFile(filepath.Join(bin, "open"), []byte("#!/bin/sh\necho \"$@\" > "+marker+"\n"), 0755)
 	sleeper := exec.Command("sleep", "0.6")
 	sleeper.Start()
 	go sleeper.Wait()
@@ -138,7 +144,7 @@ func TestRelaunchScript(t *testing.T) {
 	if time.Since(start) < 500*time.Millisecond {
 		t.Fatal("did not wait for the app to quit")
 	}
-	b, _ := os.ReadFile(marker)
+	b, _ := ioutil.ReadFile(marker)
 	if !strings.Contains(string(b), "/Applications/21 Remote.app") {
 		t.Fatalf("not reopened: %q", b)
 	}

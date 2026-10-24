@@ -2,6 +2,7 @@
 package update
 
 import (
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -64,7 +65,7 @@ func (k *keychain) Set(t string) error {
 type fileStore struct{ path string }
 
 func (f *fileStore) Get() string {
-	b, _ := os.ReadFile(f.path)
+	b, _ := ioutil.ReadFile(f.path)
 	return strings.TrimSpace(string(b))
 }
 
@@ -73,8 +74,8 @@ func (f *fileStore) Set(t string) error {
 		os.Remove(f.path)
 		return nil
 	}
-	os.MkdirAll(filepath.Dir(f.path), 0o755)
-	return os.WriteFile(f.path, []byte(t), 0o600)
+	os.MkdirAll(filepath.Dir(f.path), 0755)
+	return ioutil.WriteFile(f.path, []byte(t), 0600)
 }
 
 func detach(cmd *exec.Cmd) {

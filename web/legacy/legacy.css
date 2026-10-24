@@ -1,0 +1,5 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* <dialog> for WebKit without it (see polyfills.js) */
+dialog { display: none; position: fixed; top: 50%; left: 50%; -webkit-transform: translate(-50%, -50%); transform: translate(-50%, -50%); z-index: 1001; margin: 0; }
+dialog[open] { display: block; }
+.poly-backdrop { position: fixed; top: 0; right: 0; bottom: 0; left: 0; background: #0006; z-index: 1000; }

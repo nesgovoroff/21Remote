@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"remote21/internal/compat"
 	"remote21/internal/netport"
 	"remote21/internal/proto"
 	"remote21/internal/serial"
@@ -76,7 +77,7 @@ type App struct {
 	Opener func(name string) (serial.Port, error)
 
 	// UpdateState supplies the "update" part of the UI state (set by main).
-	UpdateState func() any
+	UpdateState func() interface{}
 }
 
 // Notify tells the UI that something outside the core changed.
@@ -364,7 +365,7 @@ func (a *App) Poll() {
 	for slot := 0; slot < proto.SlotsPerFrame; slot++ {
 		st, err := link.SlotStatus(slot)
 		var devErr *proto.DeviceError
-		if errors.As(err, &devErr) {
+		if compat.As(err, &devErr) {
 			continue // an error answer from the frame leaves the slot as it is
 		}
 		a.mu.Lock()
@@ -458,17 +459,17 @@ func (a *App) setCardTypeLocked(c *Card, t int) {
 // ---- operations from the UI ----
 
 type Op struct {
-	Op     string `json:"op"`
-	Strip  string `json:"strip"`
-	Target string `json:"target"`
-	Slot   int    `json:"slot"`
-	Field  string `json:"field"`
-	Index  int    `json:"index"`
-	Value  any    `json:"value"`
-	Before bool   `json:"before"`
-	Text   string `json:"text"`
-	Delta  int    `json:"delta"`
-	Ops    []Op   `json:"ops"`
+	Op     string      `json:"op"`
+	Strip  string      `json:"strip"`
+	Target string      `json:"target"`
+	Slot   int         `json:"slot"`
+	Field  string      `json:"field"`
+	Index  int         `json:"index"`
+	Value  interface{} `json:"value"`
+	Before bool        `json:"before"`
+	Text   string      `json:"text"`
+	Delta  int         `json:"delta"`
+	Ops    []Op        `json:"ops"`
 
 	noUndo bool
 }
@@ -709,7 +710,7 @@ func (a *App) Do(op Op) (string, error) {
 }
 
 func (a *App) applySettings(op Op) (string, error) {
-	m, _ := op.Value.(map[string]any)
+	m, _ := op.Value.(map[string]interface{})
 	if v, ok := m["pollInterval"]; ok {
 		a.cfg.Set("COM_PollInterval", strconv.Itoa(clamp(asInt(v), 1, 600)))
 	}

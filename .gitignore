@@ -2,3 +2,4 @@ dist/
 build/
 plugins/build/
 *.o
+web/assets_gen.go

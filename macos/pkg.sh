@@ -1,6 +1,8 @@
 #!/bin/bash
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Builds the installer package "21-Remote-<version>.pkg" (macOS only).
+# Builds the installer package "21-Remote-<version>-macOS10.pkg" for macOS 10.10-10.15 (macOS only).
+# The Audio Unit and VST3 plug-ins need macOS 10.13 or later: on older systems
+# the installer leaves them out.
 #
 #   dist/21 Remote.app               -> /Applications
 #   dist/plugins/Components/*.component -> /Library/Audio/Plug-Ins/Components
@@ -112,11 +114,11 @@ component local.remote21.pkg.jsfx "$WORK/jsfx" "/Library/Application Support/21 
 mkdir -p "$WORK/res"
 cat > "$WORK/res/welcome.html" <<EOF
 <html><body style="font-family: -apple-system, sans-serif; font-size: 13px">
-<h2>21 Remote $VERSION</h2>
+<h2>21 Remote $VERSION for macOS 10.10–10.15</h2>
 <p>Remote control for D21m frames: the 21 Remote app and the DAW plug-ins.</p>
 <ul>
 <li><b>21 Remote</b> app, in Applications</li>
-<li><b>Audio Unit</b> and <b>VST3</b> plug-ins 21 Channel and 21 Overview, for all users</li>
+<li><b>Audio Unit</b> and <b>VST3</b> plug-ins 21 Channel and 21 Overview, for all users (macOS 10.13 or later)</li>
 <li><b>JS plug-ins</b> 21 Channel and 21 Overview</li>
 </ul>
 <p>Click <b>Customize</b> on the Installation Type page to leave out parts.
@@ -135,12 +137,15 @@ EOF
 cat > "$WORK/distribution.xml" <<EOF
 <?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="2">
-  <title>21 Remote $VERSION</title>
+  <title>21 Remote $VERSION for macOS 10.10–10.15</title>
   <welcome file="welcome.html" mime-type="text/html"/>
   <conclusion file="conclusion.html" mime-type="text/html"/>
-  <options customize="allow" require-scripts="false" hostArchitectures="arm64,x86_64" rootVolumeOnly="true"/>
+  <options customize="allow" require-scripts="false" hostArchitectures="x86_64" rootVolumeOnly="true"/>
   <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
-  <volume-check><allowed-os-versions><os-version min="11.0"/></allowed-os-versions></volume-check>
+  <volume-check><allowed-os-versions><os-version min="10.10"/></allowed-os-versions></volume-check>
+  <script>
+  function pluginsOK() { return system.compareVersions(system.version.ProductVersion, '10.13') >= 0; }
+  </script>
   <choices-outline>
     <line choice="app"/>
     <line choice="au"/>
@@ -150,10 +155,10 @@ cat > "$WORK/distribution.xml" <<EOF
   <choice id="app" title="21 Remote app" description="The app that talks to the rack. The plug-ins need it.">
     <pkg-ref id="local.remote21.pkg.app"/>
   </choice>
-  <choice id="au" title="Audio Unit plug-ins" description="21 Channel and 21 Overview as Audio Units.">
+  <choice id="au" title="Audio Unit plug-ins" description="21 Channel and 21 Overview as Audio Units (macOS 10.13 or later)." start_visible="pluginsOK()" start_selected="pluginsOK()" start_enabled="pluginsOK()">
     <pkg-ref id="local.remote21.pkg.au"/>
   </choice>
-  <choice id="vst3" title="VST3 plug-ins" description="21 Channel and 21 Overview as VST3.">
+  <choice id="vst3" title="VST3 plug-ins" description="21 Channel and 21 Overview as VST3 (macOS 10.13 or later)." start_visible="pluginsOK()" start_selected="pluginsOK()" start_enabled="pluginsOK()">
     <pkg-ref id="local.remote21.pkg.vst3"/>
   </choice>
   <choice id="jsfx" title="JS plug-ins" description="21 Channel and 21 Overview as JS effects, and the 21 Remote Bridge script that connects them with the app (it starts together with REAPER).">
@@ -167,6 +172,6 @@ cat > "$WORK/distribution.xml" <<EOF
 EOF
 
 productbuild --distribution "$WORK/distribution.xml" --resources "$WORK/res" --package-path "$PKGS" \
-  "$OUT/21-Remote-$VERSION.pkg"
+  "$OUT/21-Remote-$VERSION-macOS10.pkg"
 rm -rf "$WORK"
-echo "done: $OUT/21-Remote-$VERSION.pkg"
+echo "done: $OUT/21-Remote-$VERSION-macOS10.pkg"

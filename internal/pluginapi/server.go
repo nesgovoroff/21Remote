@@ -28,6 +28,7 @@ import (
 	"sync"
 	"time"
 
+	"io/ioutil"
 	"remote21/internal/core"
 )
 
@@ -75,8 +76,8 @@ func Start(b Backend, dir, token, url, version string) (*Server, error) {
 	}
 	s := &Server{b: b, token: token, url: url, version: version, ln: ln, file: filepath.Join(dir, "plugin.json")}
 	d, _ := json.Marshal(discovery{Port: ln.Addr().(*net.TCPAddr).Port, Token: token, URL: url, PID: os.Getpid(), Version: version})
-	os.MkdirAll(dir, 0o755)
-	if err := os.WriteFile(s.file, d, 0o600); err != nil {
+	os.MkdirAll(dir, 0755)
+	if err := ioutil.WriteFile(s.file, d, 0600); err != nil {
 		ln.Close()
 		return nil, err
 	}
@@ -134,7 +135,7 @@ func (s *Server) serve(c net.Conn) {
 	}
 	rd := bufio.NewReaderSize(c, 64*1024)
 	var wmu sync.Mutex
-	send := func(v any) error {
+	send := func(v interface{}) error {
 		b, err := json.Marshal(v)
 		if err != nil {
 			return err
@@ -171,7 +172,7 @@ func (s *Server) serve(c net.Conn) {
 		s.b.SetPluginTrack(connID, "", "")
 	}()
 	log.Printf("plug-in connected: %s", hello.Hello.Client)
-	if send(map[string]any{"hello": map[string]any{"ok": true, "version": s.version, "url": s.url}}) != nil {
+	if send(map[string]interface{}{"hello": map[string]interface{}{"ok": true, "version": s.version, "url": s.url}}) != nil {
 		return
 	}
 
@@ -218,7 +219,7 @@ func (s *Server) serve(c net.Conn) {
 		lb, _ := json.Marshal(l)
 		if lastLayout == nil || layoutChanged(l, lastLayout) {
 			lastLayout = lb
-			if err := send(map[string]any{"layout": l}); err != nil {
+			if err := send(map[string]interface{}{"layout": l}); err != nil {
 				return err
 			}
 			for _, p := range l.Params {
@@ -238,7 +239,7 @@ func (s *Server) serve(c net.Conn) {
 		case <-done:
 			return
 		case <-ping.C:
-			if send(map[string]any{"ping": time.Now().Unix()}) != nil {
+			if send(map[string]interface{}{"ping": time.Now().Unix()}) != nil {
 				return
 			}
 		case <-ch:
@@ -263,7 +264,7 @@ func (s *Server) serve(c net.Conn) {
 				continue
 			}
 			if len(diff) > 0 {
-				if send(map[string]any{"values": diff}) != nil {
+				if send(map[string]interface{}{"values": diff}) != nil {
 					return
 				}
 			}

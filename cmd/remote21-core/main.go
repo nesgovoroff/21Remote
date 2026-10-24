@@ -15,7 +15,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -29,6 +28,7 @@ import (
 	"syscall"
 	"time"
 
+	"io/ioutil"
 	"remote21/internal/core"
 	"remote21/internal/pluginapi"
 	"remote21/internal/update"
@@ -109,7 +109,7 @@ func main() {
 		}
 		shutdown()
 	}
-	app.UpdateState = func() any { return upd.View() }
+	app.UpdateState = func() interface{} { return upd.View() }
 	go upd.Loop(20*time.Second, 6*time.Hour)
 	updateAPI(srv.Handler.(*http.ServeMux), upd, token)
 	permissionAPI(srv.Handler.(*http.ServeMux), postGuard(token), func() string { return app.Port() })
@@ -121,7 +121,7 @@ func main() {
 			syscall.Dup2(int(devnull.Fd()), 1)
 		}
 		// the shell keeps our stdin open; EOF means it is gone
-		io.Copy(io.Discard, bufio.NewReader(os.Stdin))
+		io.Copy(ioutil.Discard, bufio.NewReader(os.Stdin))
 		shutdown()
 	}
 	fmt.Println("21 Remote is running at", url)
@@ -135,8 +135,8 @@ func setupLog(embedded bool) {
 	if runtime.GOOS == "darwin" && embedded {
 		if home, err := os.UserHomeDir(); err == nil {
 			dir := filepath.Join(home, "Library", "Logs")
-			os.MkdirAll(dir, 0o755)
-			if f, err := os.OpenFile(filepath.Join(dir, "21 Remote.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644); err == nil {
+			os.MkdirAll(dir, 0755)
+			if f, err := os.OpenFile(filepath.Join(dir, "21 Remote.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644); err == nil {
 				log.SetOutput(f)
 			}
 		}
@@ -152,7 +152,7 @@ func openBrowser(url string) {
 	}
 }
 
-func writeJSON(w http.ResponseWriter, v any) {
+func writeJSON(w http.ResponseWriter, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	json.NewEncoder(w).Encode(v)
@@ -164,8 +164,7 @@ func jsonErr(w http.ResponseWriter, err error) {
 
 func handler(app *core.App, token string) http.Handler {
 	mux := http.NewServeMux()
-	static, _ := fs.Sub(web.FS, ".")
-	fileSrv := http.StripPrefix("/static/", http.FileServer(http.FS(static)))
+	fileSrv := http.StripPrefix("/static/", web.Handler())
 
 	authed := func(r *http.Request) bool {
 		c, err := r.Cookie("r21")
@@ -186,7 +185,7 @@ func handler(app *core.App, token string) http.Handler {
 			h(w, r)
 		}
 	}
-	decode := func(r *http.Request, v any) error {
+	decode := func(r *http.Request, v interface{}) error {
 		return json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(v)
 	}
 
@@ -208,7 +207,7 @@ func handler(app *core.App, token string) http.Handler {
 			http.Error(w, "Open 21 Remote from the app or from the address it printed.", http.StatusForbidden)
 			return
 		}
-		b, _ := web.FS.ReadFile("index.html")
+		b, _ := web.ReadFile("index.html")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
 		w.Write(b)
@@ -278,7 +277,7 @@ func handler(app *core.App, token string) http.Handler {
 			jsonErr(w, err)
 			return
 		}
-		writeJSON(w, map[string]any{"ok": true, "message": msg})
+		writeJSON(w, map[string]interface{}{"ok": true, "message": msg})
 	}))
 	mux.HandleFunc("/api/snapshot/save", guard(func(w http.ResponseWriter, r *http.Request) {
 		var req struct{ Path string }
@@ -307,7 +306,7 @@ func handler(app *core.App, token string) http.Handler {
 			jsonErr(w, err)
 			return
 		}
-		writeJSON(w, map[string]any{"ok": true, "mismatches": mm})
+		writeJSON(w, map[string]interface{}{"ok": true, "mismatches": mm})
 	}))
 	mux.HandleFunc("/api/dialog", guard(func(w http.ResponseWriter, r *http.Request) {
 		var req struct{ Kind string }
@@ -318,7 +317,7 @@ func handler(app *core.App, token string) http.Handler {
 			return
 		}
 		home, _ := os.UserHomeDir()
-		writeJSON(w, map[string]any{"path": p, "prompt": prompt, "suggest": filepath.Join(home, "Session.xml")})
+		writeJSON(w, map[string]interface{}{"path": p, "prompt": prompt, "suggest": filepath.Join(home, "Session.xml")})
 	}))
 	return mux
 }

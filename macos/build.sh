@@ -1,7 +1,9 @@
 #!/bin/sh
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Builds "21 Remote.app" (universal: Apple Silicon + Intel) without Xcode.
-# Works on Linux or macOS with: go >= 1.22, clang, ld64.lld, llvm-lipo, python3 (+Pillow for the icon).
+# Builds "21 Remote.app" for macOS 10.10-10.15 (Intel) without Xcode.
+# Works on Linux or macOS with: Go 1.12 (the last Go that runs on macOS 10.10;
+# set GO=/path/to/go1.12/bin/go), clang, ld64.lld, python3 (+Pillow for the
+# icon) and esbuild (or npx).
 set -eu
 cd "$(dirname "$0")/.."
 VERSION=${VERSION:-$(cat VERSION)}
@@ -9,36 +11,43 @@ BUILD=${BUILD:-$VERSION}
 OUT=dist
 APP="$OUT/21 Remote.app"
 TMP=$(mktemp -d)
-LIPO=$(command -v llvm-lipo || command -v llvm-lipo-18 || command -v lipo)
+GO=${GO:-go}
+MINOS=10.10
 LD64=$(command -v ld64.lld || command -v ld64.lld-18 || true)
 ON_MAC=$([ "$(uname)" = Darwin ] && echo 1 || echo 0)
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-echo "• engine (Go, no cgo)"
-for a in arm64 amd64; do
-  GOOS=darwin GOARCH=$a CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$VERSION -X main.updateRepo=${UPDATE_REPO:-}" -o "$TMP/core-$a" ./cmd/remote21-core
-done
-"$LIPO" -create "$TMP/core-arm64" "$TMP/core-amd64" -output "$APP/Contents/MacOS/remote21-core"
+case "$("$GO" version)" in
+  *go1.12*) ;;
+  *) echo "build.sh: this branch needs Go 1.12 (GO=$GO is $("$GO" version)); newer Go does not run on macOS 10.10" >&2; exit 1 ;;
+esac
+
+echo "• user interface for old WebKit"
+python3 macos/legacyweb.py
+
+echo "• engine (Go 1.12, no cgo)"
+GOFLAGS= GO111MODULE=on GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 "$GO" build -ldflags "-s -w -X main.version=$VERSION -X main.updateRepo=${UPDATE_REPO:-}" \
+  -o "$APP/Contents/MacOS/remote21-core" ./cmd/remote21-core
 
 echo "• window shell (C + Objective-C runtime)"
-for a in arm64 x86_64; do
+for a in x86_64; do
   for src in shell midi; do
-    clang -target $a-apple-macos11.0 -ffreestanding -fno-stack-protector -O2 -Wall -Wno-unused-parameter -c macos/$src.c -o "$TMP/$src-$a.o"
+    clang -target $a-apple-macos$MINOS -ffreestanding -fno-stack-protector -O2 -Wall -Wno-unused-parameter -c macos/$src.c -o "$TMP/$src-$a.o"
   done
   if [ "$ON_MAC" = 1 ]; then
     # on a Mac: link against the real SDK frameworks
-    clang -target $a-apple-macos11.0 -o "$TMP/shell-$a" "$TMP/shell-$a.o" "$TMP/midi-$a.o" \
+    clang -target $a-apple-macos$MINOS -o "$TMP/shell-$a" "$TMP/shell-$a.o" "$TMP/midi-$a.o" \
       -framework AppKit -framework WebKit -framework CoreMIDI -framework CoreFoundation -framework Foundation -lobjc
   else
     # elsewhere: link against the hand-written .tbd stubs
-    "$LD64" -arch $a -platform_version macos 11.0 14.0 -o "$TMP/shell-$a" "$TMP/shell-$a.o" "$TMP/midi-$a.o" \
+    "$LD64" -arch $a -platform_version macos $MINOS 10.15 -o "$TMP/shell-$a" "$TMP/shell-$a.o" "$TMP/midi-$a.o" \
       macos/tbd/libSystem.tbd macos/tbd/libobjc.tbd macos/tbd/Foundation.tbd macos/tbd/AppKit.tbd macos/tbd/WebKit.tbd \
       macos/tbd/CoreMIDI.tbd macos/tbd/CoreFoundation.tbd
   fi
 done
-"$LIPO" -create "$TMP/shell-arm64" "$TMP/shell-x86_64" -output "$APP/Contents/MacOS/21 Remote"
+cp "$TMP/shell-x86_64" "$APP/Contents/MacOS/21 Remote"
 chmod 755 "$APP/Contents/MacOS/"*
 
 echo "• icon"
@@ -70,7 +79,7 @@ cat > "$APP/Contents/Info.plist" <<EOF
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundleVersion</key><string>$BUILD</string>
-  <key>LSMinimumSystemVersion</key><string>11.0</string>
+  <key>LSMinimumSystemVersion</key><string>10.10</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.music</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
@@ -78,6 +87,7 @@ cat > "$APP/Contents/Info.plist" <<EOF
   <key>NSAppTransportSecurity</key>
   <dict>
     <key>NSAllowsLocalNetworking</key><true/>
+    <key>NSAllowsArbitraryLoads</key><true/>
     <key>NSAllowsArbitraryLoadsInWebContent</key><true/>
   </dict>
   <key>NSLocalNetworkUsageDescription</key><string>21 Remote talks to the D21m frame through a serial device server on your network.</string>

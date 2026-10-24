@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -185,7 +186,7 @@ func (a *App) bridgeLine(line string, tracks *map[string]string) {
 
 // RunBridge serves the bridge directory until the process ends.
 func (a *App) RunBridge(dir string) {
-	os.MkdirAll(dir, 0o755)
+	os.MkdirAll(dir, 0755)
 	cmdPath := filepath.Join(dir, "commands.txt")
 	var off int64
 	var lastVer uint64
@@ -221,7 +222,7 @@ func (a *App) RunBridge(dir string) {
 				}
 				if size > off {
 					f.Seek(off, io.SeekStart)
-					data, _ := io.ReadAll(io.LimitReader(f, size-off))
+					data, _ := ioutil.ReadAll(io.LimitReader(f, size-off))
 					if n := bytes.LastIndexByte(data, '\n'); n >= 0 {
 						sc := bufio.NewScanner(bytes.NewReader(data[:n+1]))
 						sc.Buffer(make([]byte, 64*1024), 1<<20)
@@ -256,7 +257,7 @@ func (a *App) RunBridge(dir string) {
 		}
 		seq++
 		tmp := filepath.Join(dir, ".state.tmp")
-		if err := os.WriteFile(tmp, []byte("R21 1\nseq "+strconv.Itoa(seq)+"\n"+state), 0o644); err == nil {
+		if err := ioutil.WriteFile(tmp, []byte("R21 1\nseq "+strconv.Itoa(seq)+"\n"+state), 0644); err == nil {
 			if err := os.Rename(tmp, filepath.Join(dir, "state.txt")); err != nil {
 				log.Printf("bridge: %v", err)
 			}

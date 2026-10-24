@@ -376,7 +376,7 @@ func (a *App) stereoLink(s *Strip, on bool) bool {
 		m := micDecode(s.Card, s.Ch, s.lastGain)
 		for _, f := range []struct {
 			n string
-			v any
+			v interface{}
 		}{{"gain", m.Gain}, {"softclip", m.Softclip}, {"phantom", m.Phantom}, {"hpf", m.HPF}, {"insert", m.Insert}} {
 			a.setMicField(r, f.n, f.v)
 		}
@@ -396,7 +396,7 @@ func boolStr(b bool) string {
 	return "False"
 }
 
-func asInt(v any) int {
+func asInt(v interface{}) int {
 	switch x := v.(type) {
 	case int:
 		return x
@@ -410,7 +410,7 @@ func asInt(v any) int {
 	return 0
 }
 
-func asBool(v any) bool {
+func asBool(v interface{}) bool {
 	switch x := v.(type) {
 	case bool:
 		return x
@@ -423,7 +423,7 @@ func asBool(v any) bool {
 }
 
 // setMicField changes one control of a mic strip and mirrors it to a linked slave.
-func (a *App) setMicField(s *Strip, field string, v any) error {
+func (a *App) setMicField(s *Strip, field string, v interface{}) error {
 	m := micDecode(s.Card, s.Ch, s.lastGain)
 	switch field {
 	case "gain":
@@ -454,7 +454,7 @@ func (a *App) setMicField(s *Strip, field string, v any) error {
 	return nil
 }
 
-func (a *App) setDL5Field(s *Strip, field string, v any) error {
+func (a *App) setDL5Field(s *Strip, field string, v interface{}) error {
 	m := dl5Decode(s.Card, s.Ch)
 	switch field {
 	case "gain":

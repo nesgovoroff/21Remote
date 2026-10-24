@@ -16,6 +16,8 @@ import (
 	"sync"
 	"time"
 
+	"io/ioutil"
+	"remote21/internal/compat"
 	"remote21/internal/midi"
 	"remote21/internal/proto"
 )
@@ -329,7 +331,7 @@ type midiState struct {
 func (a *App) midiInit(dir string) {
 	ms := &midiState{conf: midiConf{Virtual: true, Feedback: true}, path: filepath.Join(dir, "midi.json"),
 		parsers: map[string]*midi.Parser{}, sent: map[string]int{}, echo: map[string]time.Time{}, status: "MIDI needs the macOS app (not available in a browser)."}
-	if b, err := os.ReadFile(ms.path); err == nil {
+	if b, err := ioutil.ReadFile(ms.path); err == nil {
 		json.Unmarshal(b, &ms.conf)
 	}
 	a.midi = ms
@@ -337,8 +339,8 @@ func (a *App) midiInit(dir string) {
 
 func (a *App) midiSaveLocked() {
 	b, _ := json.MarshalIndent(a.midi.conf, "", "  ")
-	os.MkdirAll(filepath.Dir(a.midi.path), 0o755)
-	if err := os.WriteFile(a.midi.path, b, 0o644); err != nil {
+	os.MkdirAll(filepath.Dir(a.midi.path), 0755)
+	if err := ioutil.WriteFile(a.midi.path, b, 0644); err != nil {
 		log.Printf("save midi: %v", err)
 	}
 }
@@ -392,7 +394,7 @@ func (a *App) midiReadLoop(r io.Reader) {
 		if line == "" {
 			continue
 		}
-		cmd, rest, _ := strings.Cut(line, " ")
+		cmd, rest, _ := compat.Cut(line, " ")
 		switch cmd {
 		case "S":
 			a.mu.Lock()
@@ -402,7 +404,7 @@ func (a *App) midiReadLoop(r io.Reader) {
 		case "D":
 			ins, outs = nil, nil
 		case "I", "O":
-			uid, name, _ := strings.Cut(rest, " ")
+			uid, name, _ := compat.Cut(rest, " ")
 			d := MIDIDevice{UID: uid, Name: name}
 			if cmd == "I" {
 				ins = append(ins, d)
@@ -416,7 +418,7 @@ func (a *App) midiReadLoop(r io.Reader) {
 			a.changed()
 			a.mu.Unlock()
 		case "M":
-			src, hx, _ := strings.Cut(rest, " ")
+			src, hx, _ := compat.Cut(rest, " ")
 			b, err := hex.DecodeString(hx)
 			if err == nil {
 				a.MIDIIn(src, b)

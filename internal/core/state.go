@@ -87,7 +87,7 @@ type State struct {
 	RecentNames  []string    `json:"recentNames"`
 	Limits       Limits      `json:"limits"`
 	MIDI         MIDIView    `json:"midi"`
-	Update       any         `json:"update"`
+	Update       interface{} `json:"update"`
 	Panel        PanelView   `json:"panel"`
 }
 

@@ -3,7 +3,7 @@ package core
 
 import (
 	"bytes"
-	"os"
+	"io/ioutil"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -116,7 +116,7 @@ func TestChannelIDs(t *testing.T) {
 }
 
 func newTestApp(t *testing.T) (*App, *SimPort) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	cfg := LoadConfig(filepath.Join(dir, "settings.xml"))
 	cfg.Set("COM_Port", DemoPort)
 	a := NewApp(cfg)
@@ -212,11 +212,11 @@ func TestSnapshotRoundTrip(t *testing.T) {
 	a.Do(Op{Op: "color", Strip: "s0c1", Text: "#123456"})
 	a.Do(Op{Op: "mic", Strip: "s0c3", Field: "gain", Value: float64(60)})
 	a.Do(Op{Op: "moveTo", Strip: "s0c1", Target: "s2c8", Before: false})
-	path := filepath.Join(t.TempDir(), "snap.xml")
+	path := filepath.Join(tempDir(t), "snap.xml")
 	if err := a.SaveSnapshot(path); err != nil {
 		t.Fatal(err)
 	}
-	data, _ := os.ReadFile(path)
+	data, _ := ioutil.ReadFile(path)
 	if !bytes.Contains(data, []byte(`type="MicEven"`)) || !bytes.Contains(data, []byte(`key="CH1_Label"`)) {
 		t.Fatalf("snapshot:\n%s", data)
 	}
@@ -279,7 +279,7 @@ func TestSnapshotMismatch(t *testing.T) {
 	a, sim := newTestApp(t)
 	a.Poll()
 	a.Do(Op{Op: "label", Strip: "s7c1", Text: "ADAT A"})
-	path := filepath.Join(t.TempDir(), "m.xml")
+	path := filepath.Join(tempDir(t), "m.xml")
 	if err := a.SaveSnapshot(path); err != nil {
 		t.Fatal(err)
 	}

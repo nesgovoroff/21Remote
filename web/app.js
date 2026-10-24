@@ -1072,7 +1072,7 @@
     const v = await (await fetch("api/version")).json().catch(() => ({}));
     const repo = S?.update?.repo;
     const src = repo ? `https://github.com/${repo}` : "";
-    dialogBox(`<div class="about"><h2>21 Remote</h2><p>Remote control for D21m frames on macOS, version ${esc(v.version || "")}.<br>Runs natively on Apple Silicon and Intel.</p>
+    dialogBox(`<div class="about"><h2>21 Remote</h2><p>Remote control for D21m frames on macOS, version ${esc(v.version || "")}.<br>Build for macOS 10.10–10.15 (Intel).</p>
       <p>Free software under the GNU Affero General Public License, version 3 or (at your option) any later version.${src ? ` Source code: <a href="${esc(src)}" target="_blank" rel="noopener">${esc(src)}</a>.` : ""} It comes with no warranty.</p>
       <p class="fine">An independent project, not affiliated with or endorsed by the maker of the D21m. D21m is a trademark of its owner. VST is a trademark of Steinberg Media Technologies GmbH.</p></div>`,
       [{ label: "Close", primary: true }]);

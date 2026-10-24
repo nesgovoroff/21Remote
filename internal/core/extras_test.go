@@ -135,10 +135,10 @@ func TestResetOrderNamesComments(t *testing.T) {
 
 // Names, colours, comments and order come back after a restart; gain does not.
 func TestSessionRestore(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	cfg := LoadConfig(filepath.Join(dir, "settings.xml"))
 	a := NewApp(cfg)
-	a.Do(Op{Op: "settings", Value: map[string]any{"port": DemoPort}})
+	a.Do(Op{Op: "settings", Value: map[string]interface{}{"port": DemoPort}})
 	a.Poll()
 	a.Do(Op{Op: "label", Strip: "s1c2", Text: "Vox"})
 	a.Do(Op{Op: "comment", Strip: "s1c2", Text: "U87, pad off"})
@@ -150,7 +150,7 @@ func TestSessionRestore(t *testing.T) {
 	if !b.State().Panel.Idle {
 		t.Fatal("app must not start demo by itself")
 	}
-	b.Do(Op{Op: "settings", Value: map[string]any{"port": DemoPort}})
+	b.Do(Op{Op: "settings", Value: map[string]interface{}{"port": DemoPort}})
 	b.Poll()
 	v := stripView(b, "s1c2")
 	if v.Label != "Vox" || v.Comment != "U87, pad off" || b.State().Strips[0].ID != order {

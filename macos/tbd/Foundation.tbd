@@ -5,5 +5,5 @@ install-name: '/System/Library/Frameworks/Foundation.framework/Versions/C/Founda
 current-version: 1.0
 exports:
   - targets: [ arm64-macos, x86_64-macos ]
-    symbols: [ _NSLog ]
+    symbols: [ _NSLog, _NSHomeDirectory ]
 ...

@@ -1,9 +1,12 @@
-name: build
+name: build (macOS 10.10-10.15)
 
+# Branch old_macos: 21 Remote for macOS 10.10-10.15 (Intel).
+# The app is built on Linux: it needs Go 1.12 (the last Go that runs on macOS
+# 10.10), and Go 1.12 does not run on the Apple Silicon build machines.
+# Plug-ins and the installer are built on macOS.
 on:
   push:
-    branches: [main]
-  pull_request:
+    branches: [old_macos]
   workflow_dispatch:
 
 permissions:
@@ -14,35 +17,65 @@ env:
   UPDATE_REPO: ${{ github.repository }}
 
 jobs:
-  macos:
-    runs-on: macos-14
-    timeout-minutes: 60
+  app:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.12.17'
           cache: false
 
-      - name: Version
-        run: echo "VERSION=$(cat VERSION)" >> "$GITHUB_ENV"
+      - name: Tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang lld >/dev/null
+          python3 -m pip install --break-system-packages --quiet pillow || python3 -m pip install --quiet pillow
+          npm install --global --silent esbuild@0.21.5
+          go version; clang --version | head -1; ls /usr/bin/ld64.lld* /usr/lib/llvm-*/bin/ld64.lld 2>/dev/null | head -3
 
-      - name: Test the engine
-        run: .github/step.sh "go test" go test -count=1 -v ./...
+      - name: Test the engine (Go 1.12)
+        run: GO111MODULE=on GOFLAGS= .github/step.sh "go test" go test -count=1 ./...
 
       - name: Build 21 Remote.app
         run: |
-          python3 -m pip install --break-system-packages --quiet pillow || python3 -m pip install --quiet pillow
-          .github/step.sh "build app" ./macos/build.sh
+          export PATH="$PATH:$(ls -d /usr/lib/llvm-*/bin | tail -1)"
+          VERSION=$(cat VERSION) .github/step.sh "build app" ./macos/build.sh
+          tar -C dist -cf app.tar "21 Remote.app"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app
+          path: app.tar
+
+  macos:
+    needs: app
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: app
+
+      - name: App
+        run: |
+          echo "VERSION=$(cat VERSION)" >> "$GITHUB_ENV"
+          mkdir -p dist && tar -C dist -xf app.tar
+          for f in "dist/21 Remote.app/Contents/MacOS/"*; do
+            echo "== $f"; lipo -info "$f"; otool -l "$f" | grep -A3 -E "LC_VERSION_MIN_MACOSX|LC_BUILD_VERSION" | head -4
+          done
 
       - name: Cache JUCE
         uses: actions/cache@v4
         with:
           path: plugins/build/_deps
-          key: juce-8.0.4-${{ runner.os }}-v1
+          key: juce-8.0.4-${{ runner.os }}-macos10-v1
 
-      - name: Build plug-ins (AU + VST3, universal)
+      - name: Build plug-ins (AU + VST3, macOS 10.13 and later)
         run: |
           .github/step.sh "cmake configure" cmake -S plugins -B plugins/build -DCMAKE_BUILD_TYPE=Release
           .github/step.sh "plug-in build" cmake --build plugins/build --config Release -j 4 \
@@ -58,7 +91,8 @@ jobs:
           for b in dist/plugins/Components/*.component dist/plugins/VST3/*.vst3; do
             codesign --force --deep --sign - "$b"
           done
-          lipo -info "dist/plugins/VST3/21 Channel.vst3/Contents/MacOS/21 Channel"
+          f="dist/plugins/VST3/21 Channel.vst3/Contents/MacOS/21 Channel"
+          lipo -info "$f"; otool -arch x86_64 -l "$f" | grep -A3 -E "LC_VERSION_MIN_MACOSX|LC_BUILD_VERSION" | head -4
 
       - name: Validate Audio Units (auval)
         continue-on-error: true
@@ -73,26 +107,30 @@ jobs:
       - name: Build the installer package
         run: |
           .github/step.sh "pkg" ./macos/pkg.sh
-          ls -la dist/*.pkg
-          pkgutil --expand "dist/21-Remote-$VERSION.pkg" x
+          P="dist/21-Remote-$VERSION-macOS10.pkg"
+          ls -la "$P"
+          pkgutil --expand "$P" x
+          grep -E "os-version|hostArchitectures|pluginsOK" x/Distribution
           for c in x/*.pkg; do echo "== $c"; pkgutil --payload-files "$c" | grep -E "MacOS/[^/]+$|jsfx$" || true; done
 
       - uses: actions/upload-artifact@v4
         with:
-          name: 21-Remote-${{ env.VERSION }}
-          path: dist/21-Remote-${{ env.VERSION }}.pkg
+          name: 21-Remote-${{ env.VERSION }}-macOS10
+          path: dist/21-Remote-${{ env.VERSION }}-macOS10.pkg
 
-      # a release is published when VERSION names a version that has none yet
+      # a release v<VERSION>-macos10 is published when it does not exist yet;
+      # it is never marked "latest" (that is the build for current macOS)
       - name: Publish release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/old_macos'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view "v$VERSION" >/dev/null 2>&1; then
-            echo "v$VERSION is already released; raise VERSION to publish a new one"
+          TAG="v$VERSION-macos10"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "$TAG is already released; raise VERSION to publish a new one"
             exit 0
           fi
           if [ -f "notes/$VERSION.md" ]; then cp "notes/$VERSION.md" notes.txt
           else git log -1 --format='%B' "$GITHUB_SHA" | grep -v -e '^Co-Authored-By:' -e '^Claude-Session:' > notes.txt; fi
-          gh release create "v$VERSION" "dist/21-Remote-$VERSION.pkg" \
-            --latest --target "$GITHUB_SHA" --title "21 Remote $VERSION" --notes-file notes.txt
+          gh release create "$TAG" "dist/21-Remote-$VERSION-macOS10.pkg" \
+            --latest=false --target "$GITHUB_SHA" --title "21 Remote $VERSION for macOS 10.10–10.15" --notes-file notes.txt

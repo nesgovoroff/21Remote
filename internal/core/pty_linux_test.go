@@ -56,7 +56,7 @@ func TestOverPTY(t *testing.T) {
 			}
 		}
 	}()
-	cfg := LoadConfig(filepath.Join(t.TempDir(), "s.xml"))
+	cfg := LoadConfig(filepath.Join(tempDir(t), "s.xml"))
 	a := NewApp(cfg)
 	a.Opener = func(n string) (serial.Port, error) { return serial.Open(n, 115200) }
 	a.mu.Lock()
