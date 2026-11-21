@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Package netport carries the D21m serial byte stream over TCP, for serial
-// device servers (RS-232 to Ethernet converters).
+// device servers (RS-422 to Ethernet converters).
 //
 //	tcp://host:port         we connect; the device server port is in "TCP Server" mode
 //	tcp-listen://:port      the device server connects to us; its port is in "TCP Client" mode
